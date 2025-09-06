@@ -41,7 +41,7 @@
  * @{ */
 #ifndef AT_MAX_PORTS
 /// 支持的最大 AT 端口数 / Max number of AT ports supported
-#define AT_MAX_PORTS 1
+#define AT_MAX_PORTS 2
 #endif
 
 #ifndef AT_MAX_QUEUE_SIZE
@@ -111,7 +111,7 @@ void at_engine_init(uint8_t port_count);
  * Same as @ref at_engine_init, additionally allows per-port echo ignore configuration.
  *
  * @param port_count         端口数量（会被截断至 AT_MAX_PORTS）/ Number of ports (capped to AT_MAX_PORTS)
- * @param echo_ignore_map    长度为 port_count 的布尔数组；true=忽略回显，false=不忽略。
+ * @param echo_ignore_map    长度为 port_count 的布尔数组；true=忽略回显，false=不忽略。  
  *                           传 NULL 则等效于全部 false。/
  *                           Boolean array of length port_count; true=ignore echo, false=keep.
  *                           If NULL, all treated as false.
