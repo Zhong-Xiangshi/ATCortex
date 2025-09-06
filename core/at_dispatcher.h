@@ -1,0 +1,12 @@
+/* core/at_dispatcher.h */
+#ifndef AT_DISPATCHER_H
+#define AT_DISPATCHER_H
+
+#include "at.h"
+
+void at_dispatcher_init(void);
+int  at_register_urc_handler  (uint8_t port_id, const char *prefix, at_urc_cb_t cb, void *user_arg);
+int  at_unregister_urc_handler(uint8_t port_id, const char *prefix);
+int  at_dispatcher_dispatch_line(uint8_t port_id, const char *line);
+
+#endif /* AT_DISPATCHER_H */
