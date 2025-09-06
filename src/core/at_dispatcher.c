@@ -50,7 +50,7 @@ int at_dispatcher_dispatch_line(uint8_t port_id, const char *line) {
         urc_entry_t *e = &g_urc[port_id][i];
         size_t pre = strlen(e->prefix);
         if (strncmp(line, e->prefix, pre) == 0) {
-            AT_LOG("URC 分发 (port %d): %s", port_id, line);
+            AT_LOG("URC dispatch (port %d): %s", port_id, line);
             e->cb(port_id, line, e->arg);
             return 1; // 已作为 URC 处理
         }
