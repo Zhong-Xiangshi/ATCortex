@@ -3,6 +3,9 @@
  * @brief 串口底层默认占位实现（请替换为你的平台实现）
  *        Default stub implementation; replace with your platform-specific code.
  */
+
+#if 0
+
 #include "at_port.h"
 
 size_t at_port_read(uint8_t port_id, uint8_t *buf, size_t len) {
@@ -21,3 +24,5 @@ uint32_t at_port_get_time_ms(uint8_t port_id) {
     // Stub: return 0. Implement with a hardware timer / systick counter.
     return 0u;
 }
+
+#endif
