@@ -1,4 +1,7 @@
-/* core/at_engine.c */
+/**
+ * @file at_engine.c
+ * @brief 引擎：轮询/调度/响应；新增命令超时与回显处理
+ */
 #include <string.h>
 #include "at_engine.h"
 #include "at_port.h"
@@ -8,30 +11,16 @@
 #include "at_log.h"
 
 typedef struct {
-    at_queue_t queue;  // 每端口独立队列
-    bool       busy;   // 是否有命令正在等待最终结果
+    at_queue_t queue;   // 命令队列
+    bool       busy;    // 是否有命令正在执行
+    bool       echo_ignore;  // 是否忽略回显
+    bool       echo_pending; // 本条命令是否仍需丢弃一次回显行
 } at_port_context_t;
 
 static at_port_context_t g_port_ctx[AT_MAX_PORTS];
 static uint8_t           g_port_count = 1;
 
 static void engine_on_line(uint8_t port_id, const char *line);
-
-void at_engine_init(uint8_t port_count) {
-    if (port_count < 1) port_count = 1;
-    if (port_count > AT_MAX_PORTS) {
-        AT_LOG("at_engine_init: port_count 超限，按 %d 处理", AT_MAX_PORTS);
-        port_count = AT_MAX_PORTS;
-    }
-    g_port_count = port_count;
-    for (uint8_t i = 0; i < g_port_count; ++i) {
-        at_queue_init(&g_port_ctx[i].queue);
-        g_port_ctx[i].busy = false;
-    }
-    at_parser_init(engine_on_line);
-    at_dispatcher_init();
-    AT_LOG("AT 引擎初始化完成, 端口数=%d", g_port_count);
-}
 
 static void finish_command(uint8_t port_id, ATCommand *cmd, bool success, const char *maybe_error_line) {
     cmd->resp_success = success;
@@ -51,17 +40,59 @@ static void finish_command(uint8_t port_id, ATCommand *cmd, bool success, const 
     AT_LOG("命令完成 (port %d), success=%d", port_id, (int)cmd->resp_success);
 }
 
+void at_engine_init(uint8_t port_count) {
+    if (port_count < 1) port_count = 1;
+    if (port_count > AT_MAX_PORTS) {
+        AT_LOG("at_engine_init: port_count 超限，按 %d 处理", AT_MAX_PORTS);
+        port_count = AT_MAX_PORTS;
+    }
+    g_port_count = port_count;
+    for (uint8_t i = 0; i < g_port_count; ++i) {
+        at_queue_init(&g_port_ctx[i].queue);
+        g_port_ctx[i].busy = false;
+        g_port_ctx[i].echo_ignore = false; // 基础版默认不忽略回显
+        g_port_ctx[i].echo_pending = false;
+    }
+    at_parser_init(engine_on_line);
+    at_dispatcher_init();
+    AT_LOG("AT 引擎初始化完成, 端口数=%d", g_port_count);
+}
+
+void at_engine_init_ex(uint8_t port_count, const bool *echo_ignore_map) {
+    at_engine_init(port_count);
+    for (uint8_t i = 0; i < g_port_count; ++i) {
+        bool ignore = false;
+        if (echo_ignore_map) ignore = echo_ignore_map[i] ? true : false;
+        g_port_ctx[i].echo_ignore  = ignore;
+        g_port_ctx[i].echo_pending = false;
+    }
+    AT_LOG("AT 引擎扩展初始化: 已设置每端口回显策略");
+}
+
+// 行回调：优先处理回显丢弃，其次 URC，再到命令响应
 static void engine_on_line(uint8_t port_id, const char *line) {
     if (port_id >= g_port_count) return;
 
-    AT_LOG("端口 %d 收到行: %s", port_id, line);
-
-    // 先尝试按 URC 处理
-    if (at_dispatcher_dispatch_line(port_id, line)) return;
-
-    // 若非 URC，作为响应处理（仅当有进行中的命令）
     at_port_context_t *ctx = &g_port_ctx[port_id];
     ATCommand *cmd = at_queue_front(&ctx->queue);
+
+    // 1) 回显处理（若端口有命令在执行 且 配置忽略回显 且 仍待丢弃一次回显）
+    if (ctx->busy && cmd && ctx->echo_ignore && ctx->echo_pending) {
+        if (strcmp(line, cmd->cmd) == 0) {
+            // 丢弃回显行
+            ctx->echo_pending = false;
+            AT_LOG("丢弃回显行 (port %d): %s", port_id, line);
+            return;
+        }
+        // 非回显行则继续走后续逻辑
+    }
+
+    // 2) URC 尝试分发
+    if (at_dispatcher_dispatch_line(port_id, line)) {
+        return;
+    }
+
+    // 3) 命令响应处理
     if (ctx->busy && cmd) {
         bool is_ok    = (strcmp(line, "OK") == 0);
         bool is_error = (strncmp(line, "ERROR", 5) == 0) ||
@@ -71,6 +102,7 @@ static void engine_on_line(uint8_t port_id, const char *line) {
             finish_command(port_id, cmd, is_ok, is_error ? line : NULL);
             at_queue_pop(&ctx->queue);
             ctx->busy = false;
+            ctx->echo_pending = false;
         } else {
             // 中间行，累加到 resp
             size_t n = strlen(line);
@@ -90,7 +122,7 @@ static void engine_on_line(uint8_t port_id, const char *line) {
             }
         }
     } else {
-        // 没有进行中的命令且非 URC：忽略或按需上报
+        // 没有进行中的命令且非 URC：忽略或日志提示
         AT_LOG("提示: 未处理的行 (port %d): %s", port_id, line);
     }
 }
@@ -107,7 +139,27 @@ void at_engine_poll(void) {
         } while (n > 0);
     }
 
-    // 2) 发送调度
+    // 2) 超时检测（对正在执行的命令）
+    for (uint8_t p = 0; p < g_port_count; ++p) {
+        at_port_context_t *ctx = &g_port_ctx[p];
+        if (ctx->busy) {
+            ATCommand *cmd = at_queue_front(&ctx->queue);
+            if (cmd) {
+                uint32_t now = at_port_get_time_ms(p);
+                uint32_t elapsed = (uint32_t)(now - cmd->start_ms); // 处理溢出
+                if (elapsed >= cmd->timeout_ms) {
+                    AT_LOG("命令超时 (port %d): %s, elapsed=%u ms", p, cmd->cmd, (unsigned)elapsed);
+                    // 用 "TIMEOUT" 作为错误行附加
+                    finish_command(p, cmd, false, "TIMEOUT");
+                    at_queue_pop(&ctx->queue);
+                    ctx->busy = false;
+                    ctx->echo_pending = false;
+                }
+            }
+        }
+    }
+
+    // 3) 发送调度（端口空闲时发送下一条）
     for (uint8_t p = 0; p < g_port_count; ++p) {
         at_port_context_t *ctx = &g_port_ctx[p];
         if (!ctx->busy) {
@@ -120,7 +172,10 @@ void at_engine_poll(void) {
                     const uint8_t crlf[2] = {'\r','\n'};
                     at_port_write(p, crlf, 2);
                 }
+                // 发送后记录起始时间 & 设置回显状态
+                next->start_ms = at_port_get_time_ms(p);
                 ctx->busy = true;
+                ctx->echo_pending = ctx->echo_ignore; // 若配置忽略回显，则期待丢弃一行
             }
         }
     }
@@ -130,9 +185,8 @@ int at_send_cmd(uint8_t port_id, const char *command, at_resp_cb_t cb, void *use
     if (port_id >= g_port_count || !command) return -1;
     at_port_context_t *ctx = &g_port_ctx[port_id];
     if (at_queue_push(&ctx->queue, command, cb, user_arg) != 0) return -1;
-    AT_LOG("命令入队 (port %d): %s", port_id, command);
+    AT_LOG("命令入队 (port %d): %s (默认超时 %u ms)", port_id, command, (unsigned)AT_DEFAULT_TIMEOUT_MS);
 
-    // 若端口空闲，立即发送第一条
     if (!ctx->busy) {
         ATCommand *cmd = at_queue_front(&ctx->queue);
         if (cmd) {
@@ -143,7 +197,33 @@ int at_send_cmd(uint8_t port_id, const char *command, at_resp_cb_t cb, void *use
                 const uint8_t crlf[2] = {'\r','\n'};
                 at_port_write(port_id, crlf, 2);
             }
+            cmd->start_ms = at_port_get_time_ms(port_id);
             ctx->busy = true;
+            ctx->echo_pending = ctx->echo_ignore;
+        }
+    }
+    return 0;
+}
+
+int at_send_cmd_ex(uint8_t port_id, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg) {
+    if (port_id >= g_port_count || !command) return -1;
+    at_port_context_t *ctx = &g_port_ctx[port_id];
+    if (at_queue_push_ex(&ctx->queue, command, timeout_ms, cb, user_arg) != 0) return -1;
+    AT_LOG("命令入队 (port %d): %s (超时 %u ms)", port_id, command, (unsigned)((timeout_ms==0)?AT_DEFAULT_TIMEOUT_MS:timeout_ms));
+
+    if (!ctx->busy) {
+        ATCommand *cmd = at_queue_front(&ctx->queue);
+        if (cmd) {
+            size_t n = strlen(cmd->cmd);
+            if (n > 0) {
+                AT_LOG("立即发送 (port %d): %s", port_id, cmd->cmd);
+                at_port_write(port_id, (const uint8_t*)cmd->cmd, n);
+                const uint8_t crlf[2] = {'\r','\n'};
+                at_port_write(port_id, crlf, 2);
+            }
+            cmd->start_ms = at_port_get_time_ms(port_id);
+            ctx->busy = true;
+            ctx->echo_pending = ctx->echo_ignore;
         }
     }
     return 0;

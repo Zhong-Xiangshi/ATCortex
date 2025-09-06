@@ -7,17 +7,19 @@
 #include <string.h>
 #include "at.h"
 
-/** 单条命令上下文 */
+/** 单条命令上下文 / Per-command context */
 typedef struct {
-    char   cmd[AT_MAX_CMD_LEN];   /**< 命令字符串（不含 CR/LF） */
-    char   resp[AT_MAX_RESP_LEN]; /**< 累计响应缓冲区 */
-    size_t resp_len;              /**< 当前响应长度 */
-    bool   resp_success;          /**< 是否最终 OK */
-    at_resp_cb_t cb;              /**< 响应回调 */
-    void  *arg;                   /**< 用户参数 */
+    char     cmd[AT_MAX_CMD_LEN];   /**< 命令字符串（不含 CR/LF）/ AT command without CR/LF */
+    char     resp[AT_MAX_RESP_LEN]; /**< 累计响应 / Accumulated response */
+    size_t   resp_len;              /**< 响应长度 / Response length */
+    bool     resp_success;          /**< 最终是否 OK / Final success flag (OK) */
+    uint32_t timeout_ms;            /**< 本命令超时 / Per-command timeout (ms) */
+    uint32_t start_ms;              /**< 实际发送起始时间 / Send start timestamp (ms) */
+    at_resp_cb_t cb;                /**< 回调 / Callback */
+    void    *arg;                   /**< 用户参数 / User argument */
 } ATCommand;
 
-/** 循环队列 */
+/** 循环队列 / Circular queue */
 typedef struct {
     ATCommand commands[AT_MAX_QUEUE_SIZE];
     int head, tail, count;
@@ -28,6 +30,7 @@ static inline bool at_queue_is_full (const at_queue_t *q) { return q->count >= A
 
 void       at_queue_init (at_queue_t *q);
 int        at_queue_push (at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg);
+int        at_queue_push_ex(at_queue_t *q, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *arg);
 ATCommand* at_queue_front(at_queue_t *q);
 void       at_queue_pop  (at_queue_t *q);
 

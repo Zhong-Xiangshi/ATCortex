@@ -5,15 +5,31 @@ void at_queue_init(at_queue_t *q) {
     q->head = q->tail = q->count = 0;
 }
 
-int at_queue_push(at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg) {
-    if (at_queue_is_full(q)) return -1;
-    ATCommand *c = &q->commands[q->tail];
+static void init_cmd_entry(ATCommand *c, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *arg) {
     size_t n = strlen(command);
     if (n >= AT_MAX_CMD_LEN) n = AT_MAX_CMD_LEN - 1;
     memcpy(c->cmd, command, n);
     c->cmd[n] = '\0';
-    c->resp_len = 0; c->resp[0] = '\0'; c->resp_success = false;
+    c->resp_len = 0; c->resp[0] = '\0';
+    c->resp_success = false;
+    c->timeout_ms = (timeout_ms == 0u) ? AT_DEFAULT_TIMEOUT_MS : timeout_ms;
+    c->start_ms   = 0u; // 发送时由引擎填写
     c->cb = cb; c->arg = arg;
+}
+
+int at_queue_push(at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg) {
+    if (at_queue_is_full(q)) return -1;
+    ATCommand *c = &q->commands[q->tail];
+    init_cmd_entry(c, command, AT_DEFAULT_TIMEOUT_MS, cb, arg);
+    q->tail = (q->tail + 1) % AT_MAX_QUEUE_SIZE;
+    q->count++;
+    return 0;
+}
+
+int at_queue_push_ex(at_queue_t *q, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *arg) {
+    if (at_queue_is_full(q)) return -1;
+    ATCommand *c = &q->commands[q->tail];
+    init_cmd_entry(c, command, timeout_ms, cb, arg);
     q->tail = (q->tail + 1) % AT_MAX_QUEUE_SIZE;
     q->count++;
     return 0;
