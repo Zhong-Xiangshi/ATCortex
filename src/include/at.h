@@ -9,27 +9,12 @@
  * - 分发器区分命令响应与 URC，支持 URC 前缀注册/反注册
  *   (dispatcher for responses vs. URCs; supports URC prefix register/unregister)
  * - 轻量日志（AT_ENABLE_LOG）(lightweight logging via AT_ENABLE_LOG)
- * - **命令超时**（默认 100ms，支持自定义）(**command timeout**: default 100ms; per-command custom timeout)
- * - **回显处理**（按端口配置是否忽略）(**echo handling**: per-port ignore policy)
- *
- * 使用示例 (Usage):
- * @code
- * // Echo 忽略配置(每端口): ignore echo on port 0, keep on port 1
- * bool echo_map[2] = { true, false };
- * at_engine_init_ex(2, echo_map);
- *
- * // 注册URC (Register URC)
- * at_register_urc_handler(0, "RING", my_urc_cb, NULL);
- *
- * // 默认超时 100ms (default timeout 100ms)
- * at_send_cmd(0, "AT", my_resp_cb, NULL);
- *
- * // 自定义超时 500ms (custom timeout 500ms)
- * at_send_cmd_ex(0, "AT+GMR", 500, my_resp_cb, NULL);
- *
- * for (;;) { at_engine_poll(); }
- * @endcode
+ * - 命令超时（默认 100ms，支持自定义）(command timeout: default 100 ms; per-command custom)
+ * - 回显处理（端口级开关）(echo handling per port)
+ * - **事务型命令**：支持 `"> "` 提示模式与**长度模式**二进制发送
+ *   (**Transactional commands**: prompt-based `"> "` and **length-based** binary sending)
  */
+
 #ifndef AT_H
 #define AT_H
 
@@ -75,118 +60,123 @@
 #endif
 /** @} */
 
-/**
- * @brief 命令响应回调 / AT command response callback
- * @param port_id   源端口 / Source port
- * @param response  累计的响应文本（可能为空）/ Concatenated response text (may be empty)
- * @param success   是否以 "OK" 结束（true 成功；false ERROR/CME/CMS）/
- *                  Whether final line indicates success ("OK") or failure (ERROR/CME/CMS)
- * @param user_arg  用户参数 / User argument passthrough
- */
+/** 回调类型 / Callbacks */
 typedef void (*at_resp_cb_t)(uint8_t port_id, const char *response, bool success, void *user_arg);
+typedef void (*at_urc_cb_t )(uint8_t port_id, const char *urc,     void *user_arg);
+
+/** ---------------- 新增：事务描述 / Transaction descriptor ---------------- */
 
 /**
- * @brief URC 回调（非命令响应的异步通知）/ URC callback (unsolicited result)
- * @param port_id   源端口 / Source port
- * @param urc       完整 URC 文本（单行）/ Full URC text (single line)
- * @param user_arg  用户参数 / User argument passthrough
+ * @brief 事务类型 / Transaction type
+ *
+ * - AT_TXN_NONE：普通行模式（不带数据阶段）
+ * - AT_TXN_PROMPT：等待某个提示（默认 "> "）后，再发送数据负载，可选终止符（如 0x1A）
+ * - AT_TXN_LENGTH：长度模式，发送完命令后**立即**发送固定长度负载（可选终止符）
+ *
+ * - AT_TXN_NONE: normal line-oriented command (no binary data stage)
+ * - AT_TXN_PROMPT: wait for a prompt (default "> ") then send payload, optional terminator (e.g. 0x1A)
+ * - AT_TXN_LENGTH: length-based; send fixed-size payload immediately after the command (optional terminator)
  */
-typedef void (*at_urc_cb_t)(uint8_t port_id, const char *urc, void *user_arg);
+typedef enum {
+    AT_TXN_NONE   = 0,
+    AT_TXN_PROMPT = 1,
+    AT_TXN_LENGTH = 2,
+} at_txn_type_t;
 
 /**
- * @brief 初始化 AT 引擎（基础版）/ Initialize AT engine (basic)
+ * @brief 事务描述（仅在事务型命令使用）/ Transaction descriptor (used for transactional commands)
  *
- * 建立内部队列、解析器、分发器等；所有端口默认**不忽略回显**。  
- * Set up queues, parser, dispatcher; all ports default to **do not ignore echo**.
- *
- * @param port_count 使用的端口数量（1..AT_MAX_PORTS；超出将被截断）/
- *                   Number of ports to use; capped to AT_MAX_PORTS.
+ * @note 所有指针（payload/terminator/prompt）在命令完成回调前必须保持有效。
+ *       All pointers MUST remain valid until the command completes (callback fired).
  */
-void at_engine_init(uint8_t port_count);
+typedef struct {
+    at_txn_type_t    type;          /**< 事务类型 / Transaction type */
 
-/**
- * @brief 初始化 AT 引擎（扩展版：端口回显策略）/ Initialize AT engine (extended: per-port echo policy)
- *
- * 与 @ref at_engine_init 相同，但可为每个端口配置是否忽略回显。  
- * Same as @ref at_engine_init, additionally allows per-port echo ignore configuration.
- *
- * @param port_count         端口数量（会被截断至 AT_MAX_PORTS）/ Number of ports (capped to AT_MAX_PORTS)
- * @param echo_ignore_map    长度为 port_count 的布尔数组；true=忽略回显，false=不忽略。  
- *                           传 NULL 则等效于全部 false。/
- *                           Boolean array of length port_count; true=ignore echo, false=keep.
- *                           If NULL, all treated as false.
- */
+    const uint8_t   *payload;       /**< 数据负载指针 / Payload pointer */
+    size_t           payload_len;   /**< 数据负载长度 / Payload length */
+
+    const uint8_t   *terminator;    /**< 终止符指针（可为 NULL）/ Terminator pointer (may be NULL) */
+    size_t           term_len;      /**< 终止符长度（可为 0）/ Terminator length (may be 0) */
+
+    const char      *prompt;        /**< 提示串（AT_TXN_PROMPT 使用；NULL=默认"> "）/ Prompt string (PROMPT mode; NULL = default "> ") */
+    size_t           prompt_len;    /**< 提示长度（0=自动 strlen 或 2 对于默认）/ Prompt length (0 = auto strlen or 2 for default) */
+} at_txn_desc_t;
+
+/** ---------------- 基础 API / Base API ---------------- */
+
+void at_engine_init   (uint8_t port_count);
 void at_engine_init_ex(uint8_t port_count, const bool *echo_ignore_map);
+void at_engine_poll   (void);
+
+int  at_register_urc_handler  (uint8_t port_id, const char *prefix, at_urc_cb_t cb, void *user_arg);
+int  at_unregister_urc_handler(uint8_t port_id, const char *prefix);
+
+int  at_send_cmd   (uint8_t port_id, const char *command, at_resp_cb_t cb, void *user_arg);
+int  at_send_cmd_ex(uint8_t port_id, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg);
+
+/** ---------------- 新增：事务型发送 API / New: Transactional send APIs ---------------- */
 
 /**
- * @brief 引擎轮询（非阻塞）/ Poll the AT engine (non-blocking)
+ * @brief 事务型发送（通用）/ Send AT command with a transaction (generic)
  *
- * 功能 / What it does:
- * - 从各端口读取数据并按行解析 / Read per-port input and parse by line
- * - 分发到 URC 或命令响应 / Dispatch to URC or command response
- * - 若端口空闲则发送下一条命令（自动追加 CRLF）/ Send next queued command if port is idle (auto-append CRLF)
- * - 检查进行中命令是否**超时** / Check **timeout** for in-flight command
+ * 发送命令后根据 @p txn 的描述执行数据阶段（等待提示或直接发送固定长度负载），
+ * 然后继续等待最终行（OK/ERROR/SEND OK 等）并回调结果。
  *
- * 应在主循环中高频调用。/ Call frequently in the main loop.
+ * After sending the command, perform the data phase per @p txn (either wait for a prompt or send a fixed-length payload),
+ * then wait for final lines (OK/ERROR/SEND OK etc.) and invoke the callback.
+ *
+ * @param port_id    端口号 / Port index
+ * @param command    命令字符串（不含 CR/LF）/ AT command string (without CR/LF)
+ * @param txn        事务描述（不可为 NULL）/ Transaction descriptor (must not be NULL)
+ * @param timeout_ms 超时时间（ms）/ Timeout in milliseconds
+ * @param cb         响应回调 / Response callback
+ * @param user_arg   透传参数 / User argument
+ * @return 0 入队成功；-1 失败 / 0 on success; -1 on failure
  */
-void at_engine_poll(void);
+int at_send_cmd_txn(uint8_t port_id, const char *command, const at_txn_desc_t *txn,
+                    uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg);
 
 /**
- * @brief 注册 URC 处理器（前缀匹配）/ Register a URC handler (prefix match)
- *
- * 任一以 @p prefix 开头的行，都会触发回调。  
- * Any incoming line starting with @p prefix triggers the callback.
- *
- * @param port_id  端口号 / Port index
- * @param prefix   URC 前缀（如 "+CMTI:"），不能为空 / URC prefix (e.g., "+CMTI:"); must not be empty
- * @param cb       回调函数 / Callback function
- * @param user_arg 透传参数 / User argument passthrough
- * @return 0 成功；-1 失败（端口非法/已满/参数错误）/
- *         0 on success; -1 on failure (invalid port/full/invalid args)
+ * @brief 提示模式便捷函数：等待 `"> "`（或自定义）后发送负载，可选终止符
+ *        Convenience: prompt-based transaction (wait for `"> "` then send payload; optional terminator).
  */
-int at_register_urc_handler(uint8_t port_id, const char *prefix, at_urc_cb_t cb, void *user_arg);
+static inline int at_send_cmd_txn_prompt(uint8_t port_id, const char *command,
+                                         const uint8_t *payload, size_t payload_len,
+                                         const uint8_t *terminator, size_t term_len,
+                                         const char *prompt, uint32_t timeout_ms,
+                                         at_resp_cb_t cb, void *user_arg)
+{
+    at_txn_desc_t t = {
+        .type        = AT_TXN_PROMPT,
+        .payload     = payload,
+        .payload_len = payload_len,
+        .terminator  = terminator,
+        .term_len    = term_len,
+        .prompt      = prompt,
+        .prompt_len  = 0,      // 0 => auto
+    };
+    return at_send_cmd_txn(port_id, command, &t, timeout_ms, cb, user_arg);
+}
 
 /**
- * @brief 反注册 URC 处理器（按前缀）/ Unregister a URC handler (by prefix)
- *
- * @param port_id  端口号 / Port index
- * @param prefix   需移除的前缀 / Prefix to remove
- * @return 0 成功；-1 未找到或参数错误 / 0 on success; -1 if not found or invalid args
+ * @brief 长度模式便捷函数：命令发出后立即发送固定长度负载（可选终止符）
+ *        Convenience: length-based transaction (send fixed-length payload immediately after command; optional terminator).
  */
-int at_unregister_urc_handler(uint8_t port_id, const char *prefix);
-
-/**
- * @brief 异步发送 AT 命令（默认超时）/ Send AT command asynchronously (default timeout)
- *
- * 命令入队，端口空闲时自动发送（自动追加 "\r\n"），并在收到最终行（OK/ERROR/CME/CMS）后回调。  
- * Queues the command; if port is idle, it is sent (with "\r\n" appended). The callback is invoked
- * when a final line (OK/ERROR/CME/CMS) is received.
- *
- * @note 命令字符串应**不包含** CR/LF。/ Command string **must not** include CR/LF.
- * @note 超时默认为 @ref AT_DEFAULT_TIMEOUT_MS。/ Timeout defaults to @ref AT_DEFAULT_TIMEOUT_MS.
- *
- * @param port_id  端口号 / Port index
- * @param command  AT 命令字符串，如 "AT+GMR" / AT command string, e.g., "AT+GMR"
- * @param cb       响应回调 / Response callback
- * @param user_arg 用户参数 / User argument passthrough
- * @return 0 成功入队；-1 失败（端口非法/队列满等）/
- *         0 on success (queued); -1 on failure (invalid port/queue full/etc.)
- */
-int at_send_cmd(uint8_t port_id, const char *command, at_resp_cb_t cb, void *user_arg);
-
-/**
- * @brief 异步发送 AT 命令（自定义超时）/ Send AT command asynchronously (custom timeout)
- *
- * 与 @ref at_send_cmd 相同，但可为该命令指定 @p timeout_ms。  
- * Same as @ref at_send_cmd, but with per-command @p timeout_ms.
- *
- * @param port_id     端口号 / Port index
- * @param command     AT 命令字符串 / AT command string
- * @param timeout_ms  超时时间（毫秒）/ Timeout in milliseconds
- * @param cb          响应回调 / Response callback
- * @param user_arg    用户参数 / User argument passthrough
- * @return 0 成功入队；-1 失败 / 0 on success; -1 on failure
- */
-int at_send_cmd_ex(uint8_t port_id, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg);
+static inline int at_send_cmd_txn_len(uint8_t port_id, const char *command,
+                                      const uint8_t *payload, size_t payload_len,
+                                      const uint8_t *terminator, size_t term_len,
+                                      uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg)
+{
+    at_txn_desc_t t = {
+        .type        = AT_TXN_LENGTH,
+        .payload     = payload,
+        .payload_len = payload_len,
+        .terminator  = terminator,
+        .term_len    = term_len,
+        .prompt      = NULL,
+        .prompt_len  = 0,
+    };
+    return at_send_cmd_txn(port_id, command, &t, timeout_ms, cb, user_arg);
+}
 
 #endif /* AT_H */

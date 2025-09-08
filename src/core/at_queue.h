@@ -9,14 +9,25 @@
 
 /** 单条命令上下文 / Per-command context */
 typedef struct {
-    char     cmd[AT_MAX_CMD_LEN];   /**< 命令字符串（不含 CR/LF）/ AT command without CR/LF */
-    char     resp[AT_MAX_RESP_LEN]; /**< 累计响应 / Accumulated response */
-    size_t   resp_len;              /**< 响应长度 / Response length */
-    bool     resp_success;          /**< 最终是否 OK / Final success flag (OK) */
-    uint32_t timeout_ms;            /**< 本命令超时 / Per-command timeout (ms) */
-    uint32_t start_ms;              /**< 实际发送起始时间 / Send start timestamp (ms) */
-    at_resp_cb_t cb;                /**< 回调 / Callback */
-    void    *arg;                   /**< 用户参数 / User argument */
+    char     cmd[AT_MAX_CMD_LEN];
+    char     resp[AT_MAX_RESP_LEN];
+    size_t   resp_len;
+    bool     resp_success;
+
+    uint32_t timeout_ms;
+    uint32_t start_ms;
+
+    at_resp_cb_t cb;
+    void    *arg;
+
+    /* ---------- 事务相关 / Transactional fields ---------- */
+    bool           txn_enabled;      /**< 是否为事务型命令 / Is transactional command */
+    at_txn_desc_t  txn;              /**< 事务描述（浅拷贝指针） / Descriptor (shallow copy of pointers) */
+    size_t         txn_sent;         /**< 已发送负载字节数 / Bytes of payload sent */
+    size_t         term_sent;        /**< 已发送终止符字节数 / Bytes of terminator sent */
+    size_t         prompt_matched;   /**< 已匹配的提示前缀长度 / Matched prompt prefix length */
+    bool           prompt_received;  /**< 已收到提示 / Prompt has been observed */
+    bool           payload_started;  /**< 已开始二进制发送，抑制行解析 / Binary phase started */
 } ATCommand;
 
 /** 循环队列 / Circular queue */
@@ -31,6 +42,11 @@ static inline bool at_queue_is_full (const at_queue_t *q) { return q->count >= A
 void       at_queue_init (at_queue_t *q);
 int        at_queue_push (at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg);
 int        at_queue_push_ex(at_queue_t *q, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *arg);
+
+/** 事务型命令入队 / Push a transactional command */
+int        at_queue_push_txn(at_queue_t *q, const char *command, const at_txn_desc_t *txn,
+                             uint32_t timeout_ms, at_resp_cb_t cb, void *arg);
+
 ATCommand* at_queue_front(at_queue_t *q);
 void       at_queue_pop  (at_queue_t *q);
 
