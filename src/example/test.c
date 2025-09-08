@@ -15,6 +15,13 @@ static int  receive_indices[AT_MAX_PORTS];
 static char send_buffers[AT_MAX_PORTS][MAX_SEND_BUFFER];
 static int  send_indices[AT_MAX_PORTS];
 
+void at_port_init(uint8_t port_id){
+    printf("at_port_init %d\n",port_id);
+    if(port_id==0){
+    
+    }
+}
+
 // 模拟底层读串口 / Simulated port read
 size_t at_port_read(uint8_t port_id, uint8_t *buf, size_t len) {
     if (port_id >= AT_MAX_PORTS) {

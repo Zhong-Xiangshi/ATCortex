@@ -76,6 +76,7 @@ void at_engine_init(uint8_t port_count) {
     }
     g_port_count = port_count;
     for (uint8_t i = 0; i < g_port_count; ++i) {
+        at_port_init(i);
         at_queue_init(&g_port_ctx[i].queue);
         g_port_ctx[i].busy = false;
         g_port_ctx[i].echo_ignore = false;

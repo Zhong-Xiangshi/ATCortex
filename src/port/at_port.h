@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+void at_port_init(uint8_t port_id);
+
 /**
  * @brief 读取指定端口接收环形缓冲区（非阻塞）
  *        Read from the specified port's RX ring buffer (non-blocking).

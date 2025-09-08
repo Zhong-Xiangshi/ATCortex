@@ -8,6 +8,13 @@
 
 #include "at_port.h"
 
+void at_port_init(uint8_t port_id){
+    printf("at_port_init %d\n",port_id);
+    if(port_id==0){
+    
+    }
+}
+
 size_t at_port_read(uint8_t port_id, uint8_t *buf, size_t len) {
     (void)port_id; (void)buf; (void)len;
     return 0; // 占位：无数据 / Stub: no data
