@@ -3,7 +3,7 @@
  * @brief Core AT engine implementation with timeout, echo handling, and transactional commands.
  */
 
-#include "at_engine.h"
+#include "at.h"
 #include "../port/at_port.h"
 #include "at_queue.h"
 #include "at_parser.h"
@@ -12,22 +12,23 @@
 
 #include <string.h>
 
-/** 每端口上下文 / Per-port context */
+/** 每端口（port）运行时上下文 */
 typedef struct {
-    at_queue_t queue;
-    bool       busy;
-    bool       echo_ignore;
-    bool       echo_pending;
+    at_queue_t queue;       /**< 命令队列 */
+    bool       busy;        /**< 是否有命令在执行 */
+    bool       echo_ignore; /**< 是否忽略首个回显行 */
+    bool       echo_pending;/**< 发送后等待丢弃的回显行仍未到达 */
 
-    bool       suppress_lines;  /* 二进制阶段抑制行处理 / suppress line handling during binary phase */
+    bool       suppress_lines;  /**< 二进制阶段：抑制行处理（避免把 payload 当响应） */
 } at_port_context_t;
 
 static at_port_context_t g_port_ctx[AT_MAX_PORTS];
 static uint8_t           g_port_count = 1;
 
+/* 行回调：由解析器触发 */
 static void engine_on_line(uint8_t port_id, const char *line);
 
-/* 工具：获取默认提示配置 / helper for default prompt "> " */
+/* 工具：确保 PROMPT 模式有默认提示（"> "） */
 static inline void txn_ensure_prompt_defaults(ATCommand *cmd) {
     if (!cmd->txn.prompt) {
         cmd->txn.prompt     = "> ";
@@ -37,7 +38,7 @@ static inline void txn_ensure_prompt_defaults(ATCommand *cmd) {
     }
 }
 
-/* 在原始字节流中匹配提示串（仅 PROMPT 模式）/ scan incoming raw bytes to detect prompt (PROMPT mode) */
+/* 在原始字节流中扫描提示串（PROMPT 模式用） */
 static void engine_scan_prompt(uint8_t port_id, const uint8_t *data, size_t len) {
     at_port_context_t *ctx = &g_port_ctx[port_id];
     if (!ctx->busy) return;
@@ -60,21 +61,21 @@ static void engine_scan_prompt(uint8_t port_id, const uint8_t *data, size_t len)
                 break;
             }
         } else {
-            /* 失败回退：若当前字符刚好匹配首字符，则 m=1，否则 m=0 */
+            /* 失败回退：若当前字符匹配首字符，则 m=1，否则 m=0 */
             m = (ch == pat[0]) ? 1u : 0u;
         }
     }
     cmd->prompt_matched = m;
 }
 
-/* 向端口推进发送事务数据（负载与终止符）/ progress sending txn payload/terminator */
+/* 推进事务：按顺序发送 payload 与 terminator；期间抑制行解析 */
 static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATCommand *cmd) {
     if (!cmd->txn_enabled) return;
 
-    /* 若是 PROMPT 模式但尚未收到提示，先不发 */
+    /* PROMPT 模式需等待提示 */
     if (cmd->txn.type == AT_TXN_PROMPT && !cmd->prompt_received) return;
 
-    /* 一旦开始发二进制，抑制行处理，避免 payload 中的 '\n' 被当成响应 */
+    /* 一旦进入二进制阶段，立刻抑制行处理 */
     if (!cmd->payload_started) {
         ctx->suppress_lines = true;
         cmd->payload_started = true;
@@ -86,10 +87,10 @@ static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATComma
         size_t remain = cmd->txn.payload_len - cmd->txn_sent;
         size_t n = at_port_write(port_id, p, remain);
         cmd->txn_sent += n;
-        return; /* 下次轮询继续推进 */
+        return; /* 由后续轮询继续推进 */
     }
 
-    /* 再发 terminator（若有）*/
+    /* 再发 terminator（若有） */
     if (cmd->txn.term_len > 0 && cmd->term_sent < cmd->txn.term_len) {
         const uint8_t *t = cmd->txn.terminator + cmd->term_sent;
         size_t trem = cmd->txn.term_len - cmd->term_sent;
@@ -100,10 +101,11 @@ static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATComma
         }
     }
 
-    /* 数据阶段结束，恢复行解析，等待最终态 */
+    /* 数据阶段结束：恢复行解析，等待最终态（OK/ERROR/...） */
     ctx->suppress_lines = false;
 }
 
+/* 结束命令：收尾拼接/裁剪响应并回调 */
 static void finish_command(uint8_t port_id, ATCommand *cmd, bool success, const char *maybe_error_line) {
     cmd->resp_success = success;
 
@@ -129,6 +131,7 @@ static void finish_command(uint8_t port_id, ATCommand *cmd, bool success, const 
     AT_LOG("Command finished (port %d), success=%d", port_id, (int)cmd->resp_success);
 }
 
+/* 引擎初始化：端口、队列、解析器、分发器 */
 void at_engine_init(uint8_t port_count) {
     if (port_count < 1) port_count = 1;
     if (port_count > AT_MAX_PORTS) {
@@ -149,6 +152,7 @@ void at_engine_init(uint8_t port_count) {
     AT_LOG("AT engine initialized, ports=%d", g_port_count);
 }
 
+/* 扩展初始化：设置每端口是否忽略回显 */
 void at_engine_init_ex(uint8_t port_count, const bool *echo_ignore_map) {
     at_engine_init(port_count);
     for (uint8_t i = 0; i < g_port_count; ++i) {
@@ -159,16 +163,25 @@ void at_engine_init_ex(uint8_t port_count, const bool *echo_ignore_map) {
     AT_LOG("AT engine extended initialization: echo ignore policy set per port");
 }
 
-/* 行回调：二进制阶段可选择抑制行；否则按 URC/响应处理 */
+/* 解析器行回调：优先 URC；其余按命令响应处理 */
 static void engine_on_line(uint8_t port_id, const char *line) {
     if (port_id >= g_port_count) return;
 
     at_port_context_t *ctx = &g_port_ctx[port_id];
     ATCommand *cmd = at_queue_front(&ctx->queue);
 
-    /* 二进制阶段：抑制任何行（避免把payload误判为响应/URC） */
+    /* 二进制阶段：抑制所有行（避免把 payload 中的 '\n' 当成响应或 URC） */
     if (ctx->suppress_lines) {
         return;
+    }
+
+    /* 回显抑制：若启用 echo_ignore，且第一行与命令完全一致，则丢弃该行 */
+    if (ctx->busy && cmd && ctx->echo_ignore && ctx->echo_pending) {
+        if (strcmp(line, cmd->cmd) == 0) {
+            AT_LOG("Echo ignored (port %d): %s", port_id, line);
+            ctx->echo_pending = false;
+            return;
+        }
     }
 
     /* 先尝试作为 URC 分发 */
@@ -176,13 +189,14 @@ static void engine_on_line(uint8_t port_id, const char *line) {
         return;
     }
 
-    /* 命令响应 */
+    /* 命令响应处理 */
     if (ctx->busy && cmd) {
-        /* 扩展成功态：除 "OK" 也接受 "SEND OK"（常见于数据发送命令） */
+        /* 扩展成功态：允许 "OK" 与 "SEND OK"；扩展错误态：ERROR/CME/CMS/SEND FAIL */
         bool is_ok    = (strcmp(line, "OK") == 0) || (strcmp(line, "SEND OK") == 0);
         bool is_error = (strncmp(line, "ERROR", 5) == 0) ||
                         (strncmp(line, "+CME ERROR", 10) == 0) ||
-                        (strncmp(line, "+CMS ERROR", 10) == 0);
+                        (strncmp(line, "+CMS ERROR", 10) == 0) ||
+                        (strncmp(line, "SEND FAIL", 9) == 0);
 
         if (is_ok || is_error) {
             finish_command(port_id, cmd, is_ok, is_error ? line : NULL);
@@ -212,6 +226,7 @@ static void engine_on_line(uint8_t port_id, const char *line) {
     }
 }
 
+/* 主循环轮询：输入、超时、起发、推进事务 */
 void at_engine_poll(void) {
     uint8_t buf[64];
 
@@ -221,7 +236,7 @@ void at_engine_poll(void) {
         do {
             n = at_port_read(p, buf, sizeof(buf));
             if (n > 0) {
-                /* 若在等待提示（PROMPT），先扫描原始字节 */
+                /* 若等待 PROMPT，先在原始字节流中扫描提示 */
                 at_port_context_t *ctx = &g_port_ctx[p];
                 if (ctx->busy) {
                     ATCommand *cmd = at_queue_front(&ctx->queue);
@@ -254,7 +269,7 @@ void at_engine_poll(void) {
         }
     }
 
-    /* 3) 如果端口空闲则发送队头命令（初始行） */
+    /* 3) 若端口空闲则发送队头命令（初始行） */
     for (uint8_t p = 0; p < g_port_count; ++p) {
         at_port_context_t *ctx = &g_port_ctx[p];
         if (!ctx->busy) {
@@ -267,10 +282,10 @@ void at_engine_poll(void) {
                     const uint8_t crlf[2] = {'\r','\n'};
                     at_port_write(p, crlf, 2);
                 }
-                /* 设置初始事务状态 */
+                /* 初始化事务状态 */
                 if (next->txn_enabled) {
                     if (next->txn.type == AT_TXN_LENGTH) {
-                        /* 长度模式：立刻进入数据阶段 */
+                        /* 长度模式：立刻进入数据阶段并抑制行处理 */
                         next->prompt_received = true;
                         ctx->suppress_lines   = true;
                     } else if (next->txn.type == AT_TXN_PROMPT) {
@@ -278,17 +293,18 @@ void at_engine_poll(void) {
                         txn_ensure_prompt_defaults(next);
                         next->prompt_matched  = 0;
                         next->prompt_received = false;
-                        /* 此时尚未抑制行；收到提示并开始发数据时再抑制 */
+                        /* 尚未抑制行，收到提示并开始发数据时再抑制 */
                     }
                 }
                 next->start_ms = at_port_get_time_ms(p);
                 ctx->busy = true;
-                ctx->echo_pending = ctx->echo_ignore;
+                ctx->echo_pending   = ctx->echo_ignore; /* 只有启用忽略时才期待丢弃第一行 */
+                ctx->suppress_lines = ctx->suppress_lines && next->txn_enabled && next->txn.type == AT_TXN_LENGTH;
             }
         }
     }
 
-    /* 4) 推进事务的数据发送（即便端口“忙”，也要推进二进制发送） */
+    /* 4) 推进事务数据（即便端口忙，也要继续推进二进制发送） */
     for (uint8_t p = 0; p < g_port_count; ++p) {
         at_port_context_t *ctx = &g_port_ctx[p];
         if (ctx->busy) {
@@ -300,6 +316,7 @@ void at_engine_poll(void) {
     }
 }
 
+/* 队列API封装：保持与头文件一致 */
 int at_send_cmd(uint8_t port_id, const char *command, at_resp_cb_t cb, void *user_arg) {
     if (port_id >= g_port_count || !command) return -1;
     at_port_context_t *ctx = &g_port_ctx[port_id];
@@ -363,7 +380,7 @@ int at_send_cmd_txn(uint8_t port_id, const char *command, const at_txn_desc_t *t
     uint32_t actual_to = (timeout_ms == 0u) ? AT_DEFAULT_TIMEOUT_MS : timeout_ms;
     AT_LOG("Command (txn) queued (port %d): %s (timeout %u ms, type=%d)", port_id, command, (unsigned)actual_to, (int)txn->type);
 
-    /* 若端口空闲，立即发出命令行；数据阶段将由轮询推进 */
+    /* 若端口空闲，立即发出命令行（数据阶段由轮询推进） */
     if (!ctx->busy) {
         ATCommand *cmd = at_queue_front(&ctx->queue);
         if (cmd) {
@@ -388,7 +405,7 @@ int at_send_cmd_txn(uint8_t port_id, const char *command, const at_txn_desc_t *t
             cmd->start_ms = at_port_get_time_ms(port_id);
             ctx->busy = true;
             ctx->echo_pending   = ctx->echo_ignore;
-            /* PROMPT 模式初始不抑制行，收到提示并开始发数据时再抑制 */
+            /* PROMPT 模式：收到提示并开始发数据时再抑制行 */
         }
     }
     return 0;

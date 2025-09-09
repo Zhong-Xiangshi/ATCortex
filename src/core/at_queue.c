@@ -1,10 +1,7 @@
 /* core/at_queue.c */
 #include "at_queue.h"
 
-void at_queue_init(at_queue_t *q) {
-    q->head = q->tail = q->count = 0;
-}
-
+/** 初始化一条命令的公共字段 */
 static void init_cmd_entry_base(ATCommand *c, const char *command,
                                 uint32_t timeout_ms, at_resp_cb_t cb, void *arg)
 {
@@ -23,6 +20,7 @@ static void init_cmd_entry_base(ATCommand *c, const char *command,
     c->cb  = cb;
     c->arg = arg;
 
+    /* 事务字段清零/默认 */
     c->txn_enabled     = false;
     c->txn.type        = AT_TXN_NONE;
     c->txn.payload     = NULL;
@@ -39,6 +37,12 @@ static void init_cmd_entry_base(ATCommand *c, const char *command,
     c->payload_started = false;
 }
 
+/** 初始化队列 */
+void at_queue_init(at_queue_t *q) {
+    q->head = q->tail = q->count = 0;
+}
+
+/** 入队默认超时命令 */
 int at_queue_push(at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg) {
     if (at_queue_is_full(q)) return -1;
     ATCommand *c = &q->commands[q->tail];
@@ -48,6 +52,7 @@ int at_queue_push(at_queue_t *q, const char *command, at_resp_cb_t cb, void *arg
     return 0;
 }
 
+/** 入队自定义超时命令 */
 int at_queue_push_ex(at_queue_t *q, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *arg) {
     if (at_queue_is_full(q)) return -1;
     ATCommand *c = &q->commands[q->tail];
@@ -57,6 +62,7 @@ int at_queue_push_ex(at_queue_t *q, const char *command, uint32_t timeout_ms, at
     return 0;
 }
 
+/** 入队事务型命令（描述指针浅拷贝） */
 int at_queue_push_txn(at_queue_t *q, const char *command, const at_txn_desc_t *txn,
                       uint32_t timeout_ms, at_resp_cb_t cb, void *arg)
 {
@@ -65,7 +71,7 @@ int at_queue_push_txn(at_queue_t *q, const char *command, const at_txn_desc_t *t
     init_cmd_entry_base(c, command, timeout_ms, cb, arg);
 
     c->txn_enabled = true;
-    c->txn         = *txn;   /* 浅拷贝指针 / shallow copy pointers */
+    c->txn         = *txn;   /* 浅拷贝指针 */
     c->txn_sent    = 0;
     c->term_sent   = 0;
     c->prompt_matched  = 0;
@@ -77,11 +83,13 @@ int at_queue_push_txn(at_queue_t *q, const char *command, const at_txn_desc_t *t
     return 0;
 }
 
+/** 取队头元素 */
 ATCommand* at_queue_front(at_queue_t *q) {
     if (at_queue_is_empty(q)) return NULL;
     return &q->commands[q->head];
 }
 
+/** 出队 */
 void at_queue_pop(at_queue_t *q) {
     if (at_queue_is_empty(q)) return;
     q->head = (q->head + 1) % AT_MAX_QUEUE_SIZE;
