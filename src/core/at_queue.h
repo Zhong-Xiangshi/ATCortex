@@ -28,6 +28,7 @@ typedef struct {
     size_t         prompt_matched;       /**< 已匹配的提示前缀长度 */
     bool           prompt_received;      /**< 是否已收到提示 */
     bool           payload_started;      /**< 是否已开始二进制阶段（抑制行解析） */
+    bool           data_receiving;       //PROMPT_RX 模式的数据接收标志
 } ATCommand;
 
 /** 循环队列：O(1) 入队/出队 */

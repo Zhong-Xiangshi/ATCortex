@@ -18,7 +18,6 @@ typedef struct {
     bool       busy;        /**< 是否有命令在执行 */
     bool       echo_ignore; /**< 是否忽略首个回显行 */
     bool       echo_pending;/**< 发送后等待丢弃的回显行仍未到达 */
-
     bool       suppress_lines;  /**< 二进制阶段：抑制行处理（避免把 payload 当响应） */
 } at_port_context_t;
 
@@ -30,6 +29,7 @@ static void engine_on_line(uint8_t port_id, const char *line);
 
 /* 工具：确保 PROMPT 模式有默认提示（"> "） */
 static inline void txn_ensure_prompt_defaults(ATCommand *cmd) {
+    if (cmd->txn.type != AT_TXN_PROMPT && cmd->txn.type != AT_TXN_PROMPT_RX) return;
     if (!cmd->txn.prompt) {
         cmd->txn.prompt     = "> ";
         cmd->txn.prompt_len = 2;
@@ -38,13 +38,17 @@ static inline void txn_ensure_prompt_defaults(ATCommand *cmd) {
     }
 }
 
-/* 在原始字节流中扫描提示串（PROMPT 模式用） */
-static void engine_scan_prompt(uint8_t port_id, const uint8_t *data, size_t len) {
+/**
+ * @brief 在原始字节流中扫描提示串
+ * @return size_t 匹配并消耗的字节数。如果没有完整匹配，则返回 0。
+ */
+static size_t engine_scan_prompt(uint8_t port_id, const uint8_t *data, size_t len) {
     at_port_context_t *ctx = &g_port_ctx[port_id];
-    if (!ctx->busy) return;
+    if (!ctx->busy) return 0;
 
     ATCommand *cmd = at_queue_front(&ctx->queue);
-    if (!cmd || !cmd->txn_enabled || cmd->txn.type != AT_TXN_PROMPT || cmd->prompt_received) return;
+    if (!cmd || !cmd->txn_enabled || cmd->prompt_received) return 0;
+    if (cmd->txn.type != AT_TXN_PROMPT && cmd->txn.type != AT_TXN_PROMPT_RX) return 0;
 
     txn_ensure_prompt_defaults(cmd);
 
@@ -58,19 +62,24 @@ static void engine_scan_prompt(uint8_t port_id, const uint8_t *data, size_t len)
             m++;
             if (m == plen) {
                 cmd->prompt_received = true;
-                break;
+                AT_LOG("Prompt matched (port %d)", port_id);
+                if (cmd->txn.type == AT_TXN_PROMPT_RX) {
+                    cmd->data_receiving = true;
+                    AT_LOG("PROMPT_RX: Data receiving started (port %d)", port_id);
+                }
+                return i + 1;
             }
         } else {
-            /* 失败回退：若当前字符匹配首字符，则 m=1，否则 m=0 */
             m = (ch == pat[0]) ? 1u : 0u;
         }
     }
     cmd->prompt_matched = m;
+    return 0; // 没有完整匹配
 }
 
 /* 推进事务：按顺序发送 payload 与 terminator；期间抑制行解析 */
 static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATCommand *cmd) {
-    if (!cmd->txn_enabled) return;
+    if (!cmd->txn_enabled || cmd->txn.type == AT_TXN_PROMPT_RX) return;
 
     /* PROMPT 模式需等待提示 */
     if (cmd->txn.type == AT_TXN_PROMPT && !cmd->prompt_received) return;
@@ -81,41 +90,29 @@ static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATComma
         cmd->payload_started = true;
     }
 
-    /* 使用 while 循环，尽可能多地发送 payload */
     while (cmd->txn_sent < cmd->txn.payload_len) {
         const uint8_t *p = cmd->txn.payload + cmd->txn_sent;
         size_t remain = cmd->txn.payload_len - cmd->txn_sent;
         size_t n = at_port_write(port_id, p, remain);
-
-        if (n > 0) {
-            cmd->txn_sent += n;
-        } else {
-            /* 缓冲区满了或出错，退出循环，等待下一次 poll */
-            return;
-        }
+        if (n > 0) cmd->txn_sent += n;
+        else return;
     }
 
-    /* 如果有 terminator，同样用 while 循环发送 */
     while (cmd->txn.term_len > 0 && cmd->term_sent < cmd->txn.term_len) {
         const uint8_t *t = cmd->txn.terminator + cmd->term_sent;
         size_t trem = cmd->txn.term_len - cmd->term_sent;
         size_t n = at_port_write(port_id, t, trem);
-
-        if (n > 0) {
-            cmd->term_sent += n;
-        } else {
-            /* 缓冲区满了或出错 */
-            return;
-        }
+        if (n > 0) cmd->term_sent += n;
+        else return;
     }
 
-    /* 数据阶段结束：恢复行解析，等待最终态（OK/ERROR/...） */
     ctx->suppress_lines = false;
 }
 
 /* 结束命令：收尾拼接/裁剪响应并回调 */
 static void finish_command(uint8_t port_id, ATCommand *cmd, bool success, const char *maybe_error_line) {
     cmd->resp_success = success;
+    cmd->data_receiving = false; // 结束时总是重置数据接收标志
 
     if (!success && maybe_error_line && strcmp(maybe_error_line, "TIMEOUT") == 0) {
         if (cmd->cb) cmd->cb(port_id, "TIMEOUT", false, cmd->arg);
@@ -171,6 +168,25 @@ void at_engine_init_ex(uint8_t port_count, const bool *echo_ignore_map) {
     AT_LOG("AT engine extended initialization: echo ignore policy set per port");
 }
 
+/* 将收到的行追加到命令的响应缓冲区 */
+static void append_line_to_resp(ATCommand *cmd, const char *line, uint8_t port_id) {
+    size_t n = strlen(line);
+    if (n < (AT_MAX_RESP_LEN - cmd->resp_len - 2)) {
+        memcpy(cmd->resp + cmd->resp_len, line, n);
+        cmd->resp_len += n;
+        cmd->resp[cmd->resp_len++] = '\n';
+        cmd->resp[cmd->resp_len] = '\0';
+    } else {
+        size_t cpy = (AT_MAX_RESP_LEN - cmd->resp_len - 2);
+        if (cpy > 0) {
+            memcpy(cmd->resp + cmd->resp_len, line, cpy);
+            cmd->resp_len += cpy;
+            cmd->resp[cmd->resp_len] = '\0';
+        }
+        AT_LOG("Warning: Response buffer overflow, truncating (port %d)", port_id);
+    }
+}
+
 /* 解析器行回调：优先 URC；其余按命令响应处理 */
 static void engine_on_line(uint8_t port_id, const char *line) {
     if (port_id >= g_port_count) return;
@@ -178,10 +194,7 @@ static void engine_on_line(uint8_t port_id, const char *line) {
     at_port_context_t *ctx = &g_port_ctx[port_id];
     ATCommand *cmd = at_queue_front(&ctx->queue);
 
-    /* 二进制阶段：抑制所有行（避免把 payload 中的 '\n' 当成响应或 URC） */
-    if (ctx->suppress_lines) {
-        return;
-    }
+    if (ctx->suppress_lines) return;
 
     /* 回显抑制：若启用 echo_ignore，且第一行与命令完全一致，则丢弃该行 */
     if (ctx->busy && cmd && ctx->echo_ignore && ctx->echo_pending) {
@@ -192,14 +205,32 @@ static void engine_on_line(uint8_t port_id, const char *line) {
         }
     }
 
-    /* 先尝试作为 URC 分发 */
+
+    if (ctx->busy && cmd && cmd->data_receiving) {
+        bool is_ok    = (strcmp(line, "OK") == 0) || (strcmp(line, "SEND OK") == 0);
+        bool is_error = (strncmp(line, "ERROR", 5) == 0) ||
+                        (strncmp(line, "+CME ERROR", 10) == 0) ||
+                        (strncmp(line, "+CMS ERROR", 10) == 0) ||
+                        (strncmp(line, "SEND FAIL", 9) == 0);
+        
+        if (is_ok || is_error) {
+            finish_command(port_id, cmd, is_ok, is_error ? line : NULL);
+            at_queue_pop(&ctx->queue);
+            ctx->busy = false;
+            ctx->echo_pending = false;
+        } else {
+            // 是数据负载，追加到响应
+            append_line_to_resp(cmd, line, port_id);
+        }
+        return; // 已经处理，直接返回
+    }
+
     if (at_dispatcher_dispatch_line(port_id, line)) {
         return;
     }
 
     /* 命令响应处理 */
     if (ctx->busy && cmd) {
-        /* 扩展成功态：允许 "OK" 与 "SEND OK"；扩展错误态：ERROR/CME/CMS/SEND FAIL */
         bool is_ok    = (strcmp(line, "OK") == 0) || (strcmp(line, "SEND OK") == 0);
         bool is_error = (strncmp(line, "ERROR", 5) == 0) ||
                         (strncmp(line, "+CME ERROR", 10) == 0) ||
@@ -211,23 +242,8 @@ static void engine_on_line(uint8_t port_id, const char *line) {
             at_queue_pop(&ctx->queue);
             ctx->busy = false;
             ctx->echo_pending = false;
-            ctx->suppress_lines = false;
         } else {
-            size_t n = strlen(line);
-            if (n < (AT_MAX_RESP_LEN - cmd->resp_len - 2)) {
-                memcpy(cmd->resp + cmd->resp_len, line, n);
-                cmd->resp_len += n;
-                cmd->resp[cmd->resp_len++] = '\n';
-                cmd->resp[cmd->resp_len] = '\0';
-            } else {
-                size_t cpy = (AT_MAX_RESP_LEN - cmd->resp_len - 2);
-                if (cpy > 0) {
-                    memcpy(cmd->resp + cmd->resp_len, line, cpy);
-                    cmd->resp_len += cpy;
-                    cmd->resp[cmd->resp_len] = '\0';
-                }
-                AT_LOG("Warning: Response buffer overflow, truncating (port %d)", port_id);
-            }
+            append_line_to_resp(cmd, line, port_id);
         }
     } else {
         AT_LOG("Info: Unhandled line (port %d): %s", port_id, line);
@@ -240,21 +256,27 @@ void at_engine_poll(void) {
 
     /* 1) 输入处理：预扫描提示 + 交给行解析器 */
     for (uint8_t p = 0; p < g_port_count; ++p) {
-        size_t n;
+        size_t n_read;
         do {
-            n = at_port_read(p, buf, sizeof(buf));
-            if (n > 0) {
-                /* 若等待 PROMPT，先在原始字节流中扫描提示 */
+            n_read = at_port_read(p, buf, sizeof(buf));
+            if (n_read > 0) {
                 at_port_context_t *ctx = &g_port_ctx[p];
+                size_t consumed = 0;
+
+                // 1. 如果需要，先尝试消耗 prompt
                 if (ctx->busy) {
                     ATCommand *cmd = at_queue_front(&ctx->queue);
-                    if (cmd && cmd->txn_enabled && cmd->txn.type == AT_TXN_PROMPT && !cmd->prompt_received) {
-                        engine_scan_prompt(p, buf, n);
+                    if (cmd && cmd->txn_enabled && !cmd->prompt_received) {
+                        consumed = engine_scan_prompt(p, buf, n_read);
                     }
                 }
-                at_parser_process(p, buf, n);
+
+                // 2. 将剩余的数据交给行解析器
+                if (n_read > consumed) {
+                    at_parser_process(p, buf + consumed, n_read - consumed);
+                }
             }
-        } while (n > 0);
+        } while (n_read > 0);
     }
 
     /* 2) 超时检测 */
@@ -287,32 +309,26 @@ void at_engine_poll(void) {
                 if (n > 0) {
                     AT_LOG("Sending command (port %d): %s", p, next->cmd);
                     at_port_write(p, (const uint8_t*)next->cmd, n);
-                    const uint8_t crlf[2] = {'\r','\n'};
-                    at_port_write(p, crlf, 2);
+                    at_port_write(p, (const uint8_t*)"\r\n", 2);
                 }
-                /* 初始化事务状态 */
                 if (next->txn_enabled) {
                     if (next->txn.type == AT_TXN_LENGTH) {
-                        /* 长度模式：立刻进入数据阶段并抑制行处理 */
                         next->prompt_received = true;
                         ctx->suppress_lines   = true;
-                    } else if (next->txn.type == AT_TXN_PROMPT) {
-                        /* 提示模式：等待提示（默认 "> "） */
+                    } else if (next->txn.type == AT_TXN_PROMPT || next->txn.type == AT_TXN_PROMPT_RX) {
                         txn_ensure_prompt_defaults(next);
                         next->prompt_matched  = 0;
                         next->prompt_received = false;
-                        /* 尚未抑制行，收到提示并开始发数据时再抑制 */
                     }
                 }
                 next->start_ms = at_port_get_time_ms(p);
                 ctx->busy = true;
-                ctx->echo_pending   = ctx->echo_ignore; /* 只有启用忽略时才期待丢弃第一行 */
-                ctx->suppress_lines = ctx->suppress_lines && next->txn_enabled && next->txn.type == AT_TXN_LENGTH;
+                ctx->echo_pending = ctx->echo_ignore;
+                ctx->suppress_lines = (next->txn_enabled && next->txn.type == AT_TXN_LENGTH);
             }
         }
     }
-
-    /* 4) 推进事务数据（即便端口忙，也要继续推进二进制发送） */
+    
     for (uint8_t p = 0; p < g_port_count; ++p) {
         at_port_context_t *ctx = &g_port_ctx[p];
         if (ctx->busy) {
@@ -324,96 +340,72 @@ void at_engine_poll(void) {
     }
 }
 
-/* 队列API封装：保持与头文件一致 */
+/* 队列API封装的通用发送逻辑 */
+static int at_send_cmd_common(uint8_t port_id, ATCommand *cmd, const char* log_msg) {
+    if (port_id >= g_port_count) return -1;
+    at_port_context_t *ctx = &g_port_ctx[port_id];
+    AT_LOG(log_msg, port_id, cmd->cmd, (unsigned)cmd->timeout_ms);
+
+    if (!ctx->busy) {
+        ATCommand *next = at_queue_front(&ctx->queue);
+        if (next == cmd) {
+            size_t n = strlen(next->cmd);
+            if (n > 0) {
+                AT_LOG("Sending immediately (port %d): %s", port_id, next->cmd);
+                at_port_write(port_id, (const uint8_t*)next->cmd, n);
+                at_port_write(port_id, (const uint8_t*)"\r\n", 2);
+            }
+
+            if (next->txn_enabled) {
+                if (next->txn.type == AT_TXN_LENGTH) {
+                    next->prompt_received = true;
+                    ctx->suppress_lines   = true;
+                } else if (next->txn.type == AT_TXN_PROMPT || next->txn.type == AT_TXN_PROMPT_RX) {
+                    txn_ensure_prompt_defaults(next);
+                    next->prompt_matched  = 0;
+                    next->prompt_received = false;
+                }
+            }
+            next->start_ms = at_port_get_time_ms(port_id);
+            ctx->busy = true;
+            ctx->echo_pending = ctx->echo_ignore;
+        }
+    }
+    return 0;
+}
+
 int at_send_cmd(uint8_t port_id, const char *command, at_resp_cb_t cb, void *user_arg) {
     if (port_id >= g_port_count || !command) return -1;
     at_port_context_t *ctx = &g_port_ctx[port_id];
     if (at_queue_push(&ctx->queue, command, cb, user_arg) != 0) return -1;
-    AT_LOG("Command queued (port %d): %s (default timeout %u ms)", port_id, command, (unsigned)AT_DEFAULT_TIMEOUT_MS);
-
-    if (!ctx->busy) {
-        ATCommand *cmd = at_queue_front(&ctx->queue);
-        if (cmd) {
-            size_t n = strlen(cmd->cmd);
-            if (n > 0) {
-                AT_LOG("Sending immediately (port %d): %s", port_id, cmd->cmd);
-                at_port_write(port_id, (const uint8_t*)cmd->cmd, n);
-                const uint8_t crlf[2] = {'\r','\n'};
-                at_port_write(port_id, crlf, 2);
-            }
-            cmd->start_ms = at_port_get_time_ms(port_id);
-            ctx->busy = true;
-            ctx->echo_pending   = ctx->echo_ignore;
-            ctx->suppress_lines = false;
-        }
-    }
-    return 0;
+    return at_send_cmd_common(port_id, at_queue_front(&ctx->queue),
+                              "Command queued (port %d): %s (default timeout %u ms)");
 }
 
 int at_send_cmd_ex(uint8_t port_id, const char *command, uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg) {
     if (port_id >= g_port_count || !command) return -1;
     at_port_context_t *ctx = &g_port_ctx[port_id];
     if (at_queue_push_ex(&ctx->queue, command, timeout_ms, cb, user_arg) != 0) return -1;
-    uint32_t actual_to = (timeout_ms == 0u) ? AT_DEFAULT_TIMEOUT_MS : timeout_ms;
-    AT_LOG("Command queued (port %d): %s (timeout %u ms)", port_id, command, (unsigned)actual_to);
-
-    if (!ctx->busy) {
-        ATCommand *cmd = at_queue_front(&ctx->queue);
-        if (cmd) {
-            size_t n = strlen(cmd->cmd);
-            if (n > 0) {
-                AT_LOG("Sending immediately (port %d): %s", port_id, cmd->cmd);
-                at_port_write(port_id, (const uint8_t*)cmd->cmd, n);
-                const uint8_t crlf[2] = {'\r','\n'};
-                at_port_write(port_id, crlf, 2);
-            }
-            cmd->start_ms = at_port_get_time_ms(port_id);
-            ctx->busy = true;
-            ctx->echo_pending   = ctx->echo_ignore;
-            ctx->suppress_lines = false;
-        }
-    }
-    return 0;
+    return at_send_cmd_common(port_id, at_queue_front(&ctx->queue),
+                              "Command queued (port %d): %s (timeout %u ms)");
 }
 
 int at_send_cmd_txn(uint8_t port_id, const char *command, const at_txn_desc_t *txn,
                     uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg)
 {
     if (port_id >= g_port_count || !command || !txn) return -1;
-    if (txn->type != AT_TXN_PROMPT && txn->type != AT_TXN_LENGTH) return -1;
+    if (txn->type != AT_TXN_PROMPT && txn->type != AT_TXN_LENGTH && txn->type != AT_TXN_PROMPT_RX) return -1;
 
     at_port_context_t *ctx = &g_port_ctx[port_id];
     if (at_queue_push_txn(&ctx->queue, command, txn, timeout_ms, cb, user_arg) != 0) return -1;
-
+    
     uint32_t actual_to = (timeout_ms == 0u) ? AT_DEFAULT_TIMEOUT_MS : timeout_ms;
     AT_LOG("Command (txn) queued (port %d): %s (timeout %u ms, type=%d)", port_id, command, (unsigned)actual_to, (int)txn->type);
 
-    /* 若端口空闲，立即发出命令行（数据阶段由轮询推进） */
     if (!ctx->busy) {
         ATCommand *cmd = at_queue_front(&ctx->queue);
         if (cmd) {
-            size_t n = strlen(cmd->cmd);
-            if (n > 0) {
-                AT_LOG("Sending immediately (port %d): %s", port_id, cmd->cmd);
-                at_port_write(port_id, (const uint8_t*)cmd->cmd, n);
-                const uint8_t crlf[2] = {'\r','\n'};
-                at_port_write(port_id, crlf, 2);
-            }
-            /* 初始化事务开关 */
-            if (cmd->txn_enabled) {
-                if (cmd->txn.type == AT_TXN_LENGTH) {
-                    cmd->prompt_received = true;
-                    ctx->suppress_lines  = true;
-                } else { /* PROMPT */
-                    txn_ensure_prompt_defaults(cmd);
-                    cmd->prompt_matched  = 0;
-                    cmd->prompt_received = false;
-                }
-            }
-            cmd->start_ms = at_port_get_time_ms(port_id);
-            ctx->busy = true;
-            ctx->echo_pending   = ctx->echo_ignore;
-            /* PROMPT 模式：收到提示并开始发数据时再抑制行 */
+            at_send_cmd_common(port_id, cmd, "Sending immediately (port %d): %s (timeout %u ms)");
         }
     }
     return 0;
