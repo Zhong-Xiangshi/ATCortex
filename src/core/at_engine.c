@@ -81,23 +81,31 @@ static void engine_progress_txn(uint8_t port_id, at_port_context_t *ctx, ATComma
         cmd->payload_started = true;
     }
 
-    /* 先发 payload */
-    if (cmd->txn_sent < cmd->txn.payload_len) {
+    /* 使用 while 循环，尽可能多地发送 payload */
+    while (cmd->txn_sent < cmd->txn.payload_len) {
         const uint8_t *p = cmd->txn.payload + cmd->txn_sent;
         size_t remain = cmd->txn.payload_len - cmd->txn_sent;
         size_t n = at_port_write(port_id, p, remain);
-        cmd->txn_sent += n;
-        return; /* 由后续轮询继续推进 */
+
+        if (n > 0) {
+            cmd->txn_sent += n;
+        } else {
+            /* 缓冲区满了或出错，退出循环，等待下一次 poll */
+            return;
+        }
     }
 
-    /* 再发 terminator（若有） */
-    if (cmd->txn.term_len > 0 && cmd->term_sent < cmd->txn.term_len) {
+    /* 如果有 terminator，同样用 while 循环发送 */
+    while (cmd->txn.term_len > 0 && cmd->term_sent < cmd->txn.term_len) {
         const uint8_t *t = cmd->txn.terminator + cmd->term_sent;
         size_t trem = cmd->txn.term_len - cmd->term_sent;
         size_t n = at_port_write(port_id, t, trem);
-        cmd->term_sent += n;
-        if (cmd->term_sent < cmd->txn.term_len) {
-            return; /* 还没发完，下次继续 */
+
+        if (n > 0) {
+            cmd->term_sent += n;
+        } else {
+            /* 缓冲区满了或出错 */
+            return;
         }
     }
 

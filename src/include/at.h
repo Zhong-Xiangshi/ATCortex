@@ -149,7 +149,7 @@ int at_send_cmd_txn(uint8_t port_id, const char *command, const at_txn_desc_t *t
                     uint32_t timeout_ms, at_resp_cb_t cb, void *user_arg);
 
 /**
- * @brief 事务便捷：提示模式（等待 prompt 后发负载，可选终止符）
+ * @brief 事务便捷：提示模式（等待 prompt 后发负载，可选终止符）。注意：回调完成前确保payload存在
  */
 static inline int at_send_cmd_txn_prompt(uint8_t port_id, const char *command,
                                          const uint8_t *payload, size_t payload_len,
