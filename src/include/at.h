@@ -61,7 +61,7 @@
 /** @name 库信息
  *  @{ */
 #define ATCORTEX_NAME    "ATCortex"
-#define ATCORTEX_VERSION "1.1.0"
+#define ATCORTEX_VERSION "1.2.0"
 /** @} */
 
 /** @name 回调类型
@@ -76,16 +76,18 @@ typedef void (*at_urc_cb_t )(uint8_t port_id, const char *urc,     void *user_ar
 /**
  * @brief 事务类型
  *
- * - AT_TXN_NONE      ：普通行命令（无二进制数据阶段）
- * - AT_TXN_PROMPT    ：等待提示（默认 "> "）后发送负载，可选终止符（如 Ctrl+Z=0x1A）
- * - AT_TXN_LENGTH    ：长度模式，命令发出后**立即**发送固定长度负载（可选终止符）
- * - AT_TXN_PROMPT_RX ：等待提示（默认 "> "）后，进入数据接收模式，直到最终态（OK/ERROR）
+ * - AT_TXN_NONE            ：普通行命令（无二进制数据阶段）
+ * - AT_TXN_PROMPT          ：等待提示（默认 "> "）后发送负载，可选终止符（如 Ctrl+Z=0x1A）
+ * - AT_TXN_LENGTH          ：长度模式，命令发出后**立即**发送固定长度负载（可选终止符）
+ * - AT_TXN_PROMPT_RX       ：等待提示（默认 "> "）后，进入数据接收模式，直到最终态（OK/ERROR）
+ * - AT_TXN_PROMPT_BINARY_RX：等待提示（如 "CONNECT"）后，接收指定长度或直到终止符的二进制数据
  */
 typedef enum {
-    AT_TXN_NONE      = 0,
-    AT_TXN_PROMPT    = 1,
-    AT_TXN_LENGTH    = 2,
-    AT_TXN_PROMPT_RX = 3,
+    AT_TXN_NONE             = 0,
+    AT_TXN_PROMPT           = 1,
+    AT_TXN_LENGTH           = 2,
+    AT_TXN_PROMPT_RX        = 3,
+    AT_TXN_PROMPT_BINARY_RX = 4,
 } at_txn_type_t;
 
 /**
@@ -94,12 +96,21 @@ typedef enum {
  */
 typedef struct {
     at_txn_type_t    type;          /**< 事务类型 */
-    const uint8_t   *payload;       /**< 负载指针 (PROMPT/LENGTH 模式用) */
-    size_t           payload_len;   /**< 负载长度 (PROMPT/LENGTH 模式用) */
-    const uint8_t   *terminator;    /**< 终止符指针，可为 NULL (PROMPT/LENGTH 模式用) */
-    size_t           term_len;      /**< 终止符长度，可为 0 (PROMPT/LENGTH 模式用) */
-    const char      *prompt;        /**< 提示串（PROMPT/PROMPT_RX 模式用；NULL=默认"> "） */
+
+    /* PROMPT/LENGTH 发送模式 */
+    const uint8_t   *payload;       /**< 负载指针 */
+    size_t           payload_len;   /**< 负载长度 */
+    const uint8_t   *terminator;    /**< 终止符指针，可为 NULL */
+    size_t           term_len;      /**< 终止符长度，可为 0 */
+
+    /* PROMPT/PROMPT_RX/PROMPT_BINARY_RX 模式 */
+    const char      *prompt;        /**< 提示串（NULL=默认"> "） */
     size_t           prompt_len;    /**< 提示长度（0=自动） */
+
+    /* PROMPT_BINARY_RX 接收模式 */
+    size_t           rx_len;        /**< 欲接收的二进制长度（若为0，则使用终止符） */
+    const char      *rx_terminator; /**< 二进制接收终止符（如 "OK"），与 rx_len 二选一 */
+    size_t           rx_term_len;   /**< 终止符长度（0=自动） */
 } at_txn_desc_t;
 /** @} */
 
@@ -206,6 +217,28 @@ static inline int at_send_cmd_txn_prompt_rx(uint8_t port_id, const char *command
         .term_len    = 0,
         .prompt      = prompt,
         .prompt_len  = 0,
+    };
+    return at_send_cmd_txn(port_id, command, &t, timeout_ms, cb, user_arg);
+}
+
+/**
+ * @brief 事务便捷：提示二进制接收模式（等待 prompt 后，接收定长或直到终止符的二进制数据）。所有指针字段在回调前必须保持有效
+ * @param rx_len        若 > 0，则按长度接收；否则使用 rx_terminator
+ * @param rx_terminator 若 rx_len=0，则以此字符串作为结束标志
+ */
+static inline int at_send_cmd_txn_prompt_binary_rx(uint8_t port_id, const char *command,
+                                                   const char *prompt,
+                                                   size_t rx_len, const char *rx_terminator,
+                                                   uint32_t timeout_ms,
+                                                   at_resp_cb_t cb, void *user_arg)
+{
+    at_txn_desc_t t = {
+        .type          = AT_TXN_PROMPT_BINARY_RX,
+        .prompt        = prompt,
+        .prompt_len    = 0,
+        .rx_len        = rx_len,
+        .rx_terminator = rx_terminator,
+        .rx_term_len   = 0,
     };
     return at_send_cmd_txn(port_id, command, &t, timeout_ms, cb, user_arg);
 }

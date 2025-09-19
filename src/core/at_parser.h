@@ -13,5 +13,10 @@ void at_parser_init(at_line_cb_t cb);
 
 /** 处理一段原始字节流（可重复调用，内部会按行缓冲并回调） */
 void at_parser_process(uint8_t port_id, const uint8_t *data, size_t len);
+/**
+ * @brief [新增] 重置指定端口的解析器状态
+ * @details 在模式切换（如从行模式到纯二进制模式）前调用，以清除内部行缓冲。
+ */
+void at_parser_reset(uint8_t port_id);
 
 #endif /* AT_PARSER_H */

@@ -21,20 +21,27 @@ static void init_cmd_entry_base(ATCommand *c, const char *command,
     c->arg = arg;
 
     /* 事务字段清零/默认 */
-    c->txn_enabled     = false;
-    c->txn.type        = AT_TXN_NONE;
-    c->txn.payload     = NULL;
-    c->txn.payload_len = 0;
-    c->txn.terminator  = NULL;
-    c->txn.term_len    = 0;
-    c->txn.prompt      = NULL;
-    c->txn.prompt_len  = 0;
+    c->txn_enabled         = false;
+    c->txn.type            = AT_TXN_NONE;
+    c->txn.payload         = NULL;
+    c->txn.payload_len     = 0;
+    c->txn.terminator      = NULL;
+    c->txn.term_len        = 0;
+    c->txn.prompt          = NULL;
+    c->txn.prompt_len      = 0;
+    c->txn.rx_len          = 0;
+    c->txn.rx_terminator   = NULL;
+    c->txn.rx_term_len     = 0;
 
-    c->txn_sent        = 0;
-    c->term_sent       = 0;
-    c->prompt_matched  = 0;
-    c->prompt_received = false;
-    c->payload_started = false;
+    c->txn_sent            = 0;
+    c->term_sent           = 0;
+    c->prompt_matched      = 0;
+    c->prompt_received     = false;
+    c->payload_started     = false;
+    c->line_data_receiving = false;
+    c->binary_receiving    = false;
+    c->binary_rx_count     = 0;
+    c->rx_term_matched     = 0;
 }
 
 /** 初始化队列 */

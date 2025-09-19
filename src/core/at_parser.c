@@ -41,3 +41,13 @@ void at_parser_process(uint8_t port_id, const uint8_t *data, size_t len) {
         }
     }
 }
+/**
+ * @brief [新增] 重置指定端口的解析器状态
+ */
+void at_parser_reset(uint8_t port_id) {
+    if (port_id >= AT_MAX_PORTS) return;
+    g_ctx[port_id].len = 0;
+    g_ctx[port_id].overflow = false;
+    AT_LOG("Parser reset (port %d)", port_id);
+}
+

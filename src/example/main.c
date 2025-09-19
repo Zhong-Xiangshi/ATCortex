@@ -1,5 +1,3 @@
-#if 0
-
 #include <stdio.h>
 #include "at.h"
 
@@ -36,5 +34,3 @@ int main(void) {
     // 不会到达
     // return 0;
 }
-
-#endif
