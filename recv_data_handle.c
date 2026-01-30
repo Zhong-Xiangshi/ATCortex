@@ -13,33 +13,20 @@ static const char *command_end_markers[] = {
     NULL
 };
 
-//行堆栈清零
-void clear_line_stack(struct atc_context *context){
-    for(uint16_t i = 0; i < context->response_line_count; i++){
-        g_atc_interface.atc_free((void *)context->response_lines[i]);
-        context->response_lines[i] = NULL;
-    }
-    context->response_line_count = 0;
+//响应缓冲区清空
+void clear_response_buffer(struct atc_context *context){
+    memset(context->response, 0, sizeof(context->response));
+    context->response_length = 0;
 }
-//推入一行到行堆栈函数
-static void push_to_line_stack(struct atc_context *context, const char *line_data ,size_t length){
-    if(context->response_line_count < ATC_RX_RESPONSE_MAX_LINES){
-        //行堆栈没满，开始分配内存
-        context->response_lines[context->response_line_count] = g_atc_interface.atc_malloc(length + 1);
-        if(context->response_lines[context->response_line_count] != NULL){
-            //分配成功，复制数据
-            memcpy((char *)context->response_lines[context->response_line_count], line_data, length);
-            //添加字符串结束符
-            ((char *)context->response_lines[context->response_line_count])[length] = '\0'; 
-            //增加行计数
-            context->response_line_count++;
-        }
-        else{
-            LOG_ERR("Failed to allocate memory for response line");
-        }
+//推入数据到响应缓冲区
+static void push_to_response_buffer(struct atc_context *context, const char *line_data ,size_t length){
+    size_t current_length = context->response_length;
+    if(current_length + length < ATC_RX_RESPONSE_MAX){
+        strncat(context->response, line_data, length);
+        context->response_length += length;
     }
     else{
-        LOG_WARN("Response line buffer full, discarding line");
+        LOG_ERR("Response buffer overflow, cannot push more data");
     }
 }
 
@@ -47,13 +34,11 @@ static void push_to_line_stack(struct atc_context *context, const char *line_dat
 void command_end_handle(struct atc_context *context, enum atc_result result){
     if(context->current_send_task != NULL){
         LOG_DEBUG("Response result: %d", result);
-        //打印所有响应行
-        for(uint16_t i = 0; i < context->response_line_count; i++){
-            LOG_DEBUG("Response line: %s", context->response_lines[i]);
-        }
+        //打印所有响应
+        if(context->response_length > 0)LOG_DEBUG("response:\r\n%s", context->response);
         //调用响应处理回调
         if(context->current_send_task->response_handler){
-            context->current_send_task->response_handler(context, result, context->response_line_count, context->response_lines);
+            context->current_send_task->response_handler(context, result, context->response, context->response_length);
         }
         else{
             LOG_WARN("No response handler for current send task");
@@ -62,15 +47,15 @@ void command_end_handle(struct atc_context *context, enum atc_result result){
         g_atc_interface.atc_free(context->current_send_task);
         context->current_send_task = NULL;
     }
-    //释放响应行内存
-    clear_line_stack(context);
+    //清除响应缓冲区
+    clear_response_buffer(context);
 }
 
 //普通行处理
 static void normal_line_handle(struct atc_context *context, const char *line_data ,size_t length){
     LOG_TRACE;
-    //推入行堆栈
-    push_to_line_stack(context, line_data, length);
+    //推入响应缓冲区
+    push_to_response_buffer(context, line_data, length);
     //检查最新一行是否为命令结束符
     for(int i = 0; command_end_markers[i] != NULL; i++){
         size_t marker_length = strlen(command_end_markers[i]);

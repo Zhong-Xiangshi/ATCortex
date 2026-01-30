@@ -55,8 +55,8 @@ void send_msg_handle(struct atc_context *context){
         return;
     }
     if(g_atc_interface.atc_queue_recv(context->send_queue, &rtask, 0) == ATC_SUCCESS){
-        //清空行堆栈
-        clear_line_stack(context);
+        //清空响应缓冲区
+        clear_response_buffer(context);
         //记录发送时间
         rtask.timestamp = _atc_time_get();
 #if LOG_LEVEL >= LOG_LEVEL_DEBUG
@@ -77,11 +77,13 @@ void send_msg_handle(struct atc_context *context){
         g_atc_interface.atc_free(rtask.data); 
         rtask.data = NULL;
         if(send_ret != ATC_SUCCESS){
+            //处理硬件发送失败
             LOG_ERR("Failed to send AT command");
             //调用响应处理回调，通知发送失败
             if(rtask.response_handler){
-                rtask.response_handler(context, ATC_ERROR, 0, NULL);
+                rtask.response_handler(context, ATC_ERROR, 0, 0);
             }
+            //直接返回，不记录当前发送任务
             return;
         }
         //记录当前发送任务

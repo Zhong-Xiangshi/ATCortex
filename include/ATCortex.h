@@ -11,8 +11,8 @@
 #define ATC_RX_BUFFER_SIZE 256
 //接收到单行的最大长度(Bytes)
 #define ATC_RX_LINE_MAX_SIZE 128
-//接收到单个响应的最大行数
-#define ATC_RX_RESPONSE_MAX_LINES 16
+//接收到响应的最大字节数
+#define ATC_RX_RESPONSE_MAX 256
 
 struct atc_context;
 
@@ -95,16 +95,16 @@ struct atc_context{
     char line_buffer[ATC_RX_LINE_MAX_SIZE];
     uint32_t line_buffer_index;
 
-    //行指针数组
-    const char *response_lines[ATC_RX_RESPONSE_MAX_LINES];
-    uint16_t response_line_count;
+    //响应缓冲区
+    char response[ATC_RX_RESPONSE_MAX];
+    size_t response_length; //当前响应数据长度
 };
 
 //URC处理函数类型定义
 typedef void (*atc_urc_handler_t)(struct atc_context *context, const char *line_data);
 
 //AT命令发送返回的结果回调
-typedef void (*atc_cmd_response_handler_t)(struct atc_context *context, enum atc_result result, uint16_t line_count,const char **response_data_lines);
+typedef void (*atc_cmd_response_handler_t)(struct atc_context *context, enum atc_result result, const char *response, size_t response_length);
 
 /* ==========================================================================
  * Section: Public API (Exposed)
