@@ -9,6 +9,12 @@ struct send_task{
     atc_cmd_response_handler_t response_handler;
     uint32_t timeout;
     uint32_t timestamp;
+    
+    //同步发送相关
+    void *semaphore;
+    enum atc_result *sync_send_result;
+    char *sync_response_buf;
+    size_t *sync_response_length;
 };
 
 void send_msg_handle(struct atc_context *context);

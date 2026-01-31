@@ -57,6 +57,12 @@ typedef int (*atc_queue_send_t)(void *queue, const void *data, uint32_t timeout)
  */
 typedef int (*atc_queue_recv_t)(void *queue, void *data, uint32_t timeout);
 
+//信号量函数
+typedef void *(*atc_semaphore_create_binary_t)(void);
+typedef int (*atc_semaphore_take_t)(void *sem, uint32_t timeout);
+typedef int (*atc_semaphore_give_t)(void *sem);
+typedef void (*atc_semaphore_delete_t)(void *sem);
+
 //log函数
 typedef int (*atc_log_t)(const char *format, ...);
 
@@ -65,6 +71,7 @@ typedef enum atc_result (*atc_send_t)(struct atc_context *context, const char *d
 
 //底层接口
 struct atc_interface{
+    //必须实现的函数
     atc_malloc_t atc_malloc;
     atc_free_t atc_free;
     atc_queue_create_t atc_queue_create;
@@ -72,6 +79,12 @@ struct atc_interface{
     atc_queue_recv_t atc_queue_recv;
     atc_log_t atc_log;
     atc_send_t atc_send;
+
+    //同步发送才需要实现的函数
+    atc_semaphore_create_binary_t atc_semaphore_create_binary;
+    atc_semaphore_take_t atc_semaphore_take;
+    atc_semaphore_give_t atc_semaphore_give;
+    atc_semaphore_delete_t atc_semaphore_delete;
 };
 
 
@@ -151,9 +164,24 @@ enum atc_result atc_urc_register(struct atc_context *context , const char *prefi
  * @param data 要发送的AT命令数据
  * @param length 数据长度
  * @param response_handler 命令响应处理回调
- * @param timeout 超时时间（ms）
+ * @param timeout 超时时间（ms）。 0表示不使用超时
  */
 enum atc_result atc_send_async(struct atc_context *context, const char *data, size_t length, atc_cmd_response_handler_t response_handler,uint32_t timeout);
+
+/**
+ * @brief 同步发送AT命令
+ * 
+ * @param context ATC上下文
+ * @param data [IN]要发送的数据
+ * @param length [IN]数据长度
+ * @param send_result [OUT] 响应结果输出。可以为 NULL
+ * @param response_buf [OUT] 响应输出缓冲区。可以为 NULL
+ * @param response_length [IN/OUT] 响应缓冲区长度，输入时为外部缓冲区大小，输出时为实际响应长度。仅在response_buf为NULL时可以为 NULL
+ * @param timeout [IN]超时时间（毫秒）。 0表示不使用超时
+ * @return enum atc_result 函数执行是否成功 
+ */
+enum atc_result atc_send_sync(struct atc_context *context, const char *data, size_t length,
+                                enum atc_result *send_result, char *response_buf, size_t *response_length, uint32_t timeout);
 
 /**
  * @brief 串口接收到数据推到ATC模块

@@ -73,7 +73,7 @@ static void line_handle(struct atc_context *context, const char *line_data ,size
     if(line_data == NULL){
         return;
     }
-    LOG_INFO("Received line: %s", line_data);
+    LOG_DEBUG("Received line: %s", line_data);
     if(length <= 2){
         //空行，忽略
         return;
