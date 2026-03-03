@@ -92,6 +92,16 @@ void recv_data_handle(struct atc_context *context){
     //读取环形缓冲区数据
     unsigned char byte;
     while(ring_buffer_read(&context->rx_buffer, &byte)){
+#if LOG_LEVEL >= LOG_LEVEL_DEBUG
+        g_atc_interface.atc_log(DBG_NAME"[RECV]:");
+        if(isprint(byte)){
+            g_atc_interface.atc_log("%c", byte);
+        }
+        else{
+            g_atc_interface.atc_log("[0x%02X]", (unsigned char)byte);
+        }
+        g_atc_interface.atc_log("\r\n");
+#endif
         //放到行缓冲区
         if(context->line_buffer_index < ATC_RX_LINE_MAX_SIZE - 1){  //保留一个字节给字符串结束符
             context->line_buffer[context->line_buffer_index] = (char)byte;
@@ -115,18 +125,6 @@ int atc_receive_data(struct atc_context *context, const char *data, size_t lengt
     if(!context || !data || length == 0)
         return 0;
     int count=0;
-#if LOG_LEVEL >= LOG_LEVEL_DEBUG
-    g_atc_interface.atc_log(DBG_NAME"[RECV]:");
-    for(size_t i = 0; i < length; i++){
-        if(isprint((int)data[i])){
-            g_atc_interface.atc_log("%c", data[i]);
-        }
-        else{
-            g_atc_interface.atc_log("[0x%02X]", (unsigned char)data[i]);
-        }
-    }
-    g_atc_interface.atc_log("\r\n");
-#endif
     for(size_t i = 0; i < length; i++){
         if(!ring_buffer_write(&context->rx_buffer, (unsigned char)data[i])){
             LOG_ERR("Failed to write data to ring buffer, buffer full");
