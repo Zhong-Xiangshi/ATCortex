@@ -2,6 +2,12 @@
 #define SEND_MSG_HANDLE_H
 
 #include "include/ATCortex.h"
+//当前任务状态
+enum send_task_status{
+    SEND_TASK_STATUS_LINE_RECV = 0,   //行接收中
+    SEND_TASK_STATUS_PROMPT,    //提示符匹配中
+    SEND_TASK_STATUS_BINARY, //接收二进制数据中
+};
 
 struct send_task{
     char *data;
@@ -15,6 +21,13 @@ struct send_task{
     enum atc_result *sync_send_result;
     char *sync_response_buf;
     size_t *sync_response_length;
+
+    //二进制数据接收相关
+    char *prompt;
+    size_t prompt_len;
+    size_t need_recv_len;   //需要接收的二进制数据长度
+
+    enum send_task_status status;
 };
 
 void send_msg_handle(struct atc_context *context);

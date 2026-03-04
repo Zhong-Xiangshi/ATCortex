@@ -5,14 +5,17 @@
 #include <stddef.h>
 #include "../ring_buffer.h"
 #include "../slist.h"
+#include "../stack.h"
 
 
 //串口接收环形缓冲区大小(Bytes)
 #define ATC_RX_BUFFER_SIZE 256
 //接收到单行的最大长度(Bytes)
-#define ATC_RX_LINE_MAX_SIZE 128
+#define ATC_RX_LINE_MAX_SIZE 256
 //接收到响应的最大字节数
-#define ATC_RX_RESPONSE_MAX 256
+#define ATC_RX_RESPONSE_MAX 512
+//prompt匹配堆栈最大深度
+#define ATC_PROMPT_STACK_MAX_DEPTH 20
 
 struct atc_context;
 
@@ -20,6 +23,7 @@ enum atc_result{
     ATC_SUCCESS = 0,
     ATC_ERROR = -1,
     ATC_TIMEOUT = -2,
+    ATC_HARDWARE_ERROR = -3,
 };
 
 //内存分配函数
@@ -111,6 +115,8 @@ struct atc_context{
     //响应缓冲区
     char response[ATC_RX_RESPONSE_MAX];
     size_t response_length; //当前响应数据长度
+
+    Stack *byte_stack; //用于prompt匹配
 };
 
 //URC处理函数类型定义
@@ -181,6 +187,39 @@ enum atc_result atc_send_async(struct atc_context *context, const char *data, si
  * @return enum atc_result 函数执行是否成功 
  */
 enum atc_result atc_send_sync(struct atc_context *context, const char *data, size_t length,
+                                enum atc_result *send_result, char *response_buf, size_t *response_length, uint32_t timeout);
+
+/**
+ * @brief 异步发送命令，并在收到特定提示字符串后接收指定长度的二进制数据。收到特定提示字符串后接收满数据即返回成功
+ * 
+ * @param context ATC上下文
+ * @param data [IN]要发送的数据
+ * @param data_len [IN]要发送的数据长度
+ * @param prompt [IN]特定提示字符串
+ * @param prompt_len [IN]特定提示字符串长度
+ * @param recv_len [IN]要接收的二进制数据长度，如果不需要接收数据，为0即可。
+ * @param response_handler [IN]命令响应处理回调
+ * @param timeout [IN]超时时间（毫秒）。 0表示不使用超时
+ * @return enum atc_result 函数执行是否成功 
+ */
+enum atc_result atc_send_with_prompt_binary_rx_async(struct atc_context *context, const char *data, size_t data_len, const char* prompt, size_t prompt_len, size_t recv_len , atc_cmd_response_handler_t response_handler , uint32_t timeout);
+
+/**
+ * @brief 同步版本，收到特定提示字符串后接收指定长度的二进制数据。收到特定提示字符串后接收满数据即返回成功
+ * 
+ * @param context ATC上下文
+ * @param data [IN]要发送的数据
+ * @param data_len [IN]要发送的数据长度
+ * @param prompt [IN]特定提示字符串
+ * @param prompt_len [IN]特定提示字符串长度
+ * @param recv_len [IN]要接收的二进制数据长度。如果不需要接收数据，为0即可。
+ * @param send_result [OUT] 指示接收是否完成。可以为 NULL
+ * @param response_buf [OUT] 接收到的二进制数据输出缓冲区。可以为 NULL
+ * @param response_length [IN/OUT] 响应缓冲区长度，输入时为外部缓冲区大小，输出时为实际二进制数据长度。仅在response_buf为NULL时可以为 NULL
+ * @param timeout [IN]超时时间（毫秒）。 0表示不使用超时
+ * @return enum atc_result 函数执行是否成功 
+ */
+enum atc_result atc_send_with_prompt_binary_rx_sync(struct atc_context *context, const char *data, size_t data_len, const char* prompt, size_t prompt_len, size_t recv_len ,
                                 enum atc_result *send_result, char *response_buf, size_t *response_length, uint32_t timeout);
 
 /**

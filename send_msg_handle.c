@@ -48,7 +48,7 @@ enum atc_result atc_send_sync(struct atc_context *context, const char *data, siz
         timeout = ATC_TIMEOUT_MAX;
     }
     //分配内存
-    struct send_task task;
+    struct send_task task={0};
     task.data = g_atc_interface.atc_malloc(length);
     if(task.data == NULL){
         LOG_ERR("Failed to allocate memory for send_task data");
@@ -94,7 +94,7 @@ enum atc_result atc_send_async(struct atc_context *context, const char *data, si
         timeout = ATC_TIMEOUT_MAX;
     }
     //分配内存
-    struct send_task task;
+    struct send_task task={0};
     task.data = g_atc_interface.atc_malloc(length);
     if(task.data == NULL){
         LOG_ERR("Failed to allocate memory for send_task data");
@@ -112,6 +112,110 @@ enum atc_result atc_send_async(struct atc_context *context, const char *data, si
         LOG_ERR("Failed to send message to send queue");
         return ATC_ERROR;
     }
+    return ATC_SUCCESS;
+}
+
+enum atc_result atc_send_with_prompt_binary_rx_async(struct atc_context *context, const char *data, size_t data_len, 
+                                                        const char* prompt, size_t prompt_len, size_t recv_len , atc_cmd_response_handler_t response_handler , uint32_t timeout){
+    if(context == NULL || data == NULL || data_len == 0 || prompt == NULL || prompt_len == 0){
+        return ATC_ERROR;
+    }
+    if(timeout == 0){
+        timeout = ATC_TIMEOUT_MAX;
+    }
+    //分配内存
+    struct send_task task={0};
+    task.data = g_atc_interface.atc_malloc(data_len);
+    if(task.data == NULL){
+        LOG_ERR("Failed to allocate memory for send_task data");
+        return ATC_ERROR;
+    }
+    memcpy(task.data, data, data_len);
+    task.length = data_len;
+    task.response_handler = response_handler;
+    task.timeout = timeout;
+    task.timestamp = 0; //初始化时间戳
+
+    //二进制接收相关
+    task.prompt = g_atc_interface.atc_malloc(prompt_len);
+    if(task.prompt == NULL){
+        g_atc_interface.atc_free(task.data);
+        LOG_ERR("Failed to allocate memory for send_task prompt");
+        return ATC_ERROR;
+    }
+    memcpy(task.prompt, prompt, prompt_len);
+    task.prompt_len = prompt_len;
+    task.need_recv_len = recv_len;
+    task.status = SEND_TASK_STATUS_PROMPT; //设置任务状态为提示符匹配中
+
+    //发送到“发送消息队列”
+    enum atc_result ret=g_atc_interface.atc_queue_send(context->send_queue, &task, 1000);
+    if(ret!=ATC_SUCCESS){
+        g_atc_interface.atc_free(task.data);
+        g_atc_interface.atc_free(task.prompt);
+        LOG_ERR("Failed to send message to send queue");
+        return ATC_ERROR;
+    }
+    return ATC_SUCCESS;
+}
+enum atc_result atc_send_with_prompt_binary_rx_sync(struct atc_context *context, const char *data, size_t data_len, const char* prompt, size_t prompt_len, size_t recv_len ,
+                                enum atc_result *send_result, char *response_buf, size_t *response_length, uint32_t timeout){
+    if(context == NULL || data == NULL || data_len == 0 || prompt == NULL || prompt_len == 0){
+        return ATC_ERROR;
+    }
+    if(timeout == 0){
+        timeout = ATC_TIMEOUT_MAX;
+    }
+    //分配内存
+    struct send_task task={0};
+    task.data = g_atc_interface.atc_malloc(data_len);
+    if(task.data == NULL){
+        LOG_ERR("Failed to allocate memory for send_task data");
+        return ATC_ERROR;
+    }
+    memcpy(task.data, data, data_len);
+    task.length = data_len;
+    task.response_handler = sync_response_handler;
+    task.timeout = timeout;
+    task.timestamp = 0; //初始化时间戳
+
+    //设置同步发送相关参数
+    task.semaphore = g_atc_interface.atc_semaphore_create_binary();
+    if(task.semaphore == NULL){
+        g_atc_interface.atc_free(task.data);
+        LOG_ERR("Failed to create semaphore for sync send");
+        return ATC_ERROR;
+    }
+    task.sync_send_result = send_result;
+    task.sync_response_buf = response_buf;
+    task.sync_response_length = response_length;
+
+    //二进制接收相关
+    task.prompt = g_atc_interface.atc_malloc(prompt_len);
+    if(task.prompt == NULL){
+        g_atc_interface.atc_free(task.data);
+        g_atc_interface.atc_semaphore_delete(task.semaphore);
+        LOG_ERR("Failed to allocate memory for send_task prompt");
+        return ATC_ERROR;
+    }
+    memcpy(task.prompt, prompt, prompt_len);
+    task.prompt_len = prompt_len;
+    task.need_recv_len = recv_len;
+    task.status = SEND_TASK_STATUS_PROMPT; //设置任务状态为提示符匹配中
+
+    //发送到“发送消息队列”
+    enum atc_result ret=g_atc_interface.atc_queue_send(context->send_queue, &task, 1000);
+    if(ret!=ATC_SUCCESS){
+        g_atc_interface.atc_free(task.data);
+        g_atc_interface.atc_free(task.prompt);
+        g_atc_interface.atc_semaphore_delete(task.semaphore);
+        LOG_ERR("Failed to send message to send queue");
+        return ATC_ERROR;
+    }
+    //等待发送完成或超时
+    g_atc_interface.atc_semaphore_take(task.semaphore, ATC_TIMEOUT_MAX);
+    //释放资源
+    g_atc_interface.atc_semaphore_delete(task.semaphore);
     return ATC_SUCCESS;
 }
 
@@ -135,6 +239,7 @@ void send_msg_handle(struct atc_context *context){
         context->current_send_task = g_atc_interface.atc_malloc(sizeof(struct send_task));
         if(context->current_send_task == NULL){
             LOG_ERR("Failed to allocate memory for current_send_task");
+            //TODO 释放rtask内存
             return;
         }
         *(context->current_send_task) = rtask;
@@ -142,6 +247,7 @@ void send_msg_handle(struct atc_context *context){
         clear_response_buffer(context);
         //记录发送时间
         context->current_send_task->timestamp = _atc_time_get();
+        //打印发送的数据
 #if LOG_LEVEL >= LOG_LEVEL_DEBUG
         g_atc_interface.atc_log(DBG_NAME"[SEND]:");
         for(size_t i = 0; i < rtask.length; i++){
@@ -156,19 +262,11 @@ void send_msg_handle(struct atc_context *context){
 #endif
         //发送数据
         enum atc_result send_ret = g_atc_interface.atc_send(context, context->current_send_task->data, context->current_send_task->length);
-        //发送后释放发送字符串内存
-        g_atc_interface.atc_free(context->current_send_task->data); 
-        context->current_send_task->data = NULL;
         if(send_ret != ATC_SUCCESS){
             //处理硬件发送失败
             LOG_ERR("Failed to send AT command");
             //调用响应处理回调，通知发送失败
-            if(rtask.response_handler){
-                rtask.response_handler(context, ATC_ERROR, NULL, 0);
-            }
-            //释放当前发送任务
-            g_atc_interface.atc_free(context->current_send_task);
-            context->current_send_task = NULL;
+            command_end_handle(context, ATC_HARDWARE_ERROR);
             return;
         }
         
