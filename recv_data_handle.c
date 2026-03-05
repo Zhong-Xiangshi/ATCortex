@@ -123,6 +123,7 @@ static void byte_prompt_handle(struct atc_context *context, unsigned char byte){
     //新字节推入堆栈
     if(!stack_push(context->byte_stack, (void*)(uintptr_t)byte)){
         LOG_ERR("Failed to push byte to stack, stack full");
+        stack_clear(context->byte_stack, NULL); //清空堆栈
     }
     //检查堆栈顶前n个元素和prompt是否匹配
     for(int i = 0; i < context->current_send_task->prompt_len; i++){
