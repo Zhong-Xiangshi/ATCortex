@@ -21,7 +21,6 @@ void urc_line_handle(struct atc_context *context, const char *line_data){
             if(entry->handler){
                 entry->handler(context, line_data);
             }
-            return; //找到一个匹配项后退出
         }
     }
 }

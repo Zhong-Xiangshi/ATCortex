@@ -14,7 +14,7 @@ static void check_send_timeout(struct atc_context *context){
     if(context->current_send_task != NULL){
         uint32_t current_time = _atc_time_get();
         if(current_time - context->current_send_task->timestamp >= context->current_send_task->timeout){
-            LOG_WARN("Current send task timeout");
+            LOG_WARN("send task timeout:%.*s", context->current_send_task->length, context->current_send_task->data);
             //超时，返回TIMEOUT结果
             command_end_handle(context, ATC_TIMEOUT);
         }
