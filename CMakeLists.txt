@@ -9,6 +9,7 @@ target_sources(ATCortex PRIVATE
     urc_handle.c
     send_msg_handle.c
     recv_data_handle.c
+    stack.c
 )
 
 target_include_directories(ATCortex 

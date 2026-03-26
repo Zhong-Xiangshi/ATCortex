@@ -2,13 +2,11 @@
 这是一个AT指令框架，用于向AT模块发送命令并获得返回结果。
 系统接口只需要实现基本的内存分配、消息队列和信号量接口即可使用。
 支持异步/同步发送。
-### 框架图
-![alt text](document/at框架设计.jpg)
 
 ### 使用方法
-1. 参考ATCortex.h初始化，开一个线程专门定时执行atc_process()。
+1. 参考ATCortex.h初始化，开一个线程定时执行atc_process()。
 2. 在UART接收中断处理函数中调用atc_receive_data()将收到的数据推送到ATCortex框架。
-3. 然后在其他线程中尽情调用同步/异步发送API。
+3. 在其他线程中调用同步/异步发送API。
 ### 示例
 AT线程：
 ``` C
@@ -107,13 +105,21 @@ void xxx(){
     int rep_len=0;
     enum atc_result send_result;
 
+    //示例1：同步发送并等待"OK"或"ERROR"，设置超时时间2s
     rep_len=sizeof(rep_buf);
     //准备发送的内容...
     snprintf(tmp, sizeof(tmp), "AT+RST\r\n");
-    //阻塞发送，设置超时时间2s
     atc_send_sync(get_atc_context(), tmp, strlen(tmp), &send_result, rep_buf, &rep_len, 2000);
     //打印响应结果
     printf("result=%d rep_len=%d rep=%.*s\r\n", send_result, rep_len, rep_len, rep_buf);
+
+    //示例2：同步发送并等待提示符，成功返回ATC_SUCCESS，最大等待1s
+    char prompt[] = "CONNECT OK";
+    snprintf(tx_buf, sizeof(tx_buf), "AT+MIPSTART=\"%s\",\"%d\"\r\n", server, port);
+    atc_send_with_prompt_binary_rx_sync(get_atc_context(), tmp, strlen(tmp), prompt, strlen(prompt), 0, &send_result, NULL, NULL, 1000);
+    //打印响应结果
+    printf("result=%d\r\n", send_result);
+
 }
 
 ```

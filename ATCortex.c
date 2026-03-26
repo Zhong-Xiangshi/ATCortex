@@ -31,24 +31,29 @@ enum atc_result atc_init(struct atc_context *context){
             return ATC_ERROR;
         }
     }
+    LOG_TRACE;
     //初始化接收处理
     if(recv_data_init(context) != ATC_SUCCESS){
         LOG_ERR("Failed to initialize receive data handler");
         return ATC_ERROR;
     }
+    LOG_TRACE;
     //初始化消息队列
     if(extern_msg_queue_init(context)!=ATC_SUCCESS){
         LOG_ERR("Failed to initialize external message queue");
         return ATC_ERROR;
     }
+    LOG_TRACE;
     if(send_msg_queue_init(context)!=ATC_SUCCESS){
         LOG_ERR("Failed to initialize send message queue");
         return ATC_ERROR;
     }
+    LOG_TRACE;
     if(urc_init(context) != ATC_SUCCESS){
         LOG_ERR("Failed to initialize URC handler list");
         return ATC_ERROR;
     }
+    LOG_TRACE;
     //将context加入链表
     if(slist_append(atc_ctx_list, context) != 0){
         LOG_ERR("Failed to append context to list");

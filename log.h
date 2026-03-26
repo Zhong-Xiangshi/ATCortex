@@ -10,17 +10,12 @@
 #define LOG_LEVEL_DEBUG 3
 #define LOG_LEVEL_TRACE 4
 
-#define DBG_NAME "ATCortex"
-#define LOG_LEVEL LOG_LEVEL_TRACE
-
 #ifndef LOG_LEVEL 
     #define LOG_LEVEL LOG_LEVEL_TRACE
 #endif
 #ifndef DBG_NAME 
-    #define DBG_NAME "Unknown"
+    #define DBG_NAME "ATCortex"
 #endif
-// #define LOG_LEVEL LOG_LEVEL_DEBUG
-// #define DBG_NAME "Unknown"
 
 // --- 日志宏定义 ---
 
