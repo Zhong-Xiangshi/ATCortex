@@ -5,6 +5,7 @@
 #include "send_msg_handle.h"
 #include <stdbool.h>
 #include <ctype.h>
+#include "stack.h"
 
 //命令结束符数组
 static const char *command_end_markers[] = {
@@ -121,9 +122,8 @@ static void byte_line_handle(struct atc_context *context, unsigned char byte){
 //对新接收的字节进行提示符匹配处理
 static void byte_prompt_handle(struct atc_context *context, unsigned char byte){
     //新字节推入堆栈
-    if(!stack_push(context->byte_stack, (void*)(uintptr_t)byte)){
+    if(!stack_push_overwrite(context->byte_stack, (void*)(uintptr_t)byte, NULL)){
         LOG_ERR("Failed to push byte to stack, stack full");
-        stack_clear(context->byte_stack, NULL); //清空堆栈
     }
     //检查堆栈顶前n个元素和prompt是否匹配
     for(int i = 0; i < context->current_send_task->prompt_len; i++){

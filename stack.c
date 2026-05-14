@@ -1,6 +1,7 @@
 #include "stack.h"
 #include <stddef.h>
 #include "interface.h"
+#include <string.h>
 /* ============================================================
  * 内存管理宏定义
  * 用户可以通过编译器参数 -DSTACK_MALLOC=my_malloc 覆盖这些定义
@@ -72,6 +73,35 @@ bool stack_push(Stack* s, void* data) {
     }
 
     s->items[s->top++] = data;
+    return true;
+}
+
+bool stack_push_overwrite(Stack* s, void* data, StackItemFreeFunc free_func) {
+    if (s == NULL) return false;
+    
+    // 防呆：如果栈容量异常为0，直接失败
+    if (s->capacity == 0) return false;
+
+    // 1. 如果栈还没满，直接走普通的压栈逻辑
+    if (s->top < s->capacity) {
+        s->items[s->top++] = data;
+        return true;
+    }
+
+    // 2. 此时栈已满，需要丢弃栈底元素 (索引为 0 的元素)
+    if (free_func != NULL && s->items[0] != NULL) {
+        free_func(s->items[0]); // 释放被丢弃的栈底内存
+    }
+
+    // 3. 将数组整体向前移动一位，覆盖掉栈底元素
+    // 使用 memmove 处理重叠内存区域非常安全高效
+    if (s->capacity > 1) {
+        memmove(&s->items[0], &s->items[1], (s->capacity - 1) * sizeof(void*));
+    }
+
+    // 4. 将新数据放入现在的栈顶
+    s->items[s->capacity - 1] = data;
+
     return true;
 }
 

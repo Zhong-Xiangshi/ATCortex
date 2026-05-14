@@ -30,6 +30,16 @@ void stack_destroy(Stack* s);
 bool stack_push(Stack* s, void* data);
 
 /**
+ * @brief 强制压栈。如果栈已满，丢弃栈底（最早入栈）的数据再压入新数据。
+ * @param s 堆栈指针
+ * @param data 要压入的新数据
+ * @param free_func 数据释放回调函数。用于释放被挤出栈底的数据，防止内存泄漏。
+ *        - 如果不需要释放（如存的是 int 或 静态字符串），传 NULL 即可。
+ * @return true 成功, false 失败 (如堆栈指针为空)
+ */
+bool stack_push_overwrite(Stack* s, void* data, StackItemFreeFunc free_func);
+
+/**
  * @brief 出栈
  */
 void* stack_pop(Stack* s);
