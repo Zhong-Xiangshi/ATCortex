@@ -214,7 +214,6 @@ int atc_receive_data(struct atc_context *context, const char *data, size_t lengt
     int count=0;
     for(size_t i = 0; i < length; i++){
         if(!ring_buffer_write(&context->rx_buffer, (unsigned char)data[i])){
-            LOG_ERR("Failed to write data to ring buffer, buffer full");
             return count;
         }
         count++;
