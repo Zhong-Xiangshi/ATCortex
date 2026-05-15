@@ -79,6 +79,8 @@ enum atc_result atc_send_sync(struct atc_context *context, const char *data, siz
         LOG_ERR("Failed to send message to send queue");
         return ATC_ERROR;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give(context->wake_semaphore);
     //等待发送完成或超时
     g_atc_interface.atc_semaphore_take(task.semaphore, ATC_TIMEOUT_MAX);
     //释放资源
@@ -112,6 +114,8 @@ enum atc_result atc_send_async(struct atc_context *context, const char *data, si
         LOG_ERR("Failed to send message to send queue");
         return ATC_ERROR;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give(context->wake_semaphore);
     return ATC_SUCCESS;
 }
 
@@ -156,6 +160,8 @@ enum atc_result atc_send_with_prompt_binary_rx_async(struct atc_context *context
         LOG_ERR("Failed to send message to send queue");
         return ATC_ERROR;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give(context->wake_semaphore);
     return ATC_SUCCESS;
 }
 enum atc_result atc_send_with_prompt_binary_rx_sync(struct atc_context *context, const char *data, size_t data_len, const char* prompt, size_t prompt_len, size_t recv_len ,
@@ -212,6 +218,8 @@ enum atc_result atc_send_with_prompt_binary_rx_sync(struct atc_context *context,
         LOG_ERR("Failed to send message to send queue");
         return ATC_ERROR;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give(context->wake_semaphore);
     //等待发送完成或超时
     g_atc_interface.atc_semaphore_take(task.semaphore, ATC_TIMEOUT_MAX);
     //释放资源

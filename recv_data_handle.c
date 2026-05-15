@@ -219,6 +219,8 @@ int atc_receive_data(struct atc_context *context, const char *data, size_t lengt
         }
         count++;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give_isr(context->wake_semaphore);
     return count;
 }
 

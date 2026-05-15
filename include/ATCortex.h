@@ -66,6 +66,10 @@ typedef void *(*atc_semaphore_create_binary_t)(void);
 typedef int (*atc_semaphore_take_t)(void *sem, uint32_t timeout);
 typedef int (*atc_semaphore_give_t)(void *sem);
 typedef void (*atc_semaphore_delete_t)(void *sem);
+typedef int (*atc_semaphore_give_isr_t)(void *sem);  // ISR 安全版本
+
+//获取系统毫秒 tick
+typedef uint32_t (*atc_get_tick_ms_t)(void);
 
 //log函数
 typedef int (*atc_log_t)(const char *format, ...);
@@ -83,12 +87,12 @@ struct atc_interface{
     atc_queue_recv_t atc_queue_recv;
     atc_log_t atc_log;
     atc_send_t atc_send;
-
-    //同步发送才需要实现的函数
     atc_semaphore_create_binary_t atc_semaphore_create_binary;
     atc_semaphore_take_t atc_semaphore_take;
     atc_semaphore_give_t atc_semaphore_give;
     atc_semaphore_delete_t atc_semaphore_delete;
+    atc_semaphore_give_isr_t atc_semaphore_give_isr;
+    atc_get_tick_ms_t atc_get_tick_ms;
 };
 
 
@@ -117,6 +121,8 @@ struct atc_context{
     size_t response_length; //当前响应数据长度
 
     Stack *byte_stack; //用于prompt匹配
+
+    void *wake_semaphore; //事件唤醒信号量
 };
 
 //URC处理函数类型定义
@@ -147,11 +153,11 @@ enum atc_result atc_interface_register(struct atc_interface *interface);
 enum atc_result atc_init(struct atc_context *context);
 
 /**
- * @brief ATC处理函数，需周期性调用
- * 
- * @param ms_elapsed 距离上次调用经过的时间（ms）
+ * @brief ATC处理函数，阻塞等待事件（数据到达/API调用/超时），内部死循环不返回
+ *
+ * @param context ATC上下文
  */
-void atc_process(uint32_t ms_elapsed);
+void atc_process(struct atc_context *context);
 
 /**
  * @brief URC注册函数
@@ -223,7 +229,7 @@ enum atc_result atc_send_with_prompt_binary_rx_sync(struct atc_context *context,
                                 enum atc_result *send_result, char *response_buf, size_t *response_length, uint32_t timeout);
 
 /**
- * @brief 串口接收到数据推到ATC模块
+ * @brief 串口接收到数据推到ATC模块，在接收中断中调用
  * 
  * @param context ATC上下文
  * @param data 接收到的数据

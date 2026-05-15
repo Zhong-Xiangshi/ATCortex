@@ -59,6 +59,8 @@ enum atc_result atc_urc_register(struct atc_context *context , const char *prefi
         LOG_ERR("Failed to send urc register message to external api queue");
         return ATC_ERROR;
     }
+    //唤醒阻塞等待的处理线程
+    g_atc_interface.atc_semaphore_give(context->wake_semaphore);
     return ATC_SUCCESS;
 }
 

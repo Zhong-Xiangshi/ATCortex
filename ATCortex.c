@@ -6,9 +6,6 @@
 #include "recv_data_handle.h"
 
 
-static slist_t *atc_ctx_list=NULL;
-static uint32_t atc_time=0;
-
 //检查发送消息是否超时
 static void check_send_timeout(struct atc_context *context){
     if(context->current_send_task != NULL){
@@ -22,15 +19,6 @@ static void check_send_timeout(struct atc_context *context){
 }
 
 enum atc_result atc_init(struct atc_context *context){
-    LOG_TRACE;
-    //初始化链表
-    if(!atc_ctx_list){
-        atc_ctx_list = slist_create(NULL);
-        if(!atc_ctx_list){
-            LOG_ERR("Failed to create atc context list");
-            return ATC_ERROR;
-        }
-    }
     LOG_TRACE;
     //初始化接收处理
     if(recv_data_init(context) != ATC_SUCCESS){
@@ -54,36 +42,42 @@ enum atc_result atc_init(struct atc_context *context){
         return ATC_ERROR;
     }
     LOG_TRACE;
-    //将context加入链表
-    if(slist_append(atc_ctx_list, context) != 0){
-        LOG_ERR("Failed to append context to list");
+    //创建唤醒信号量
+    context->wake_semaphore = g_atc_interface.atc_semaphore_create_binary();
+    if(!context->wake_semaphore){
+        LOG_ERR("Failed to create wake semaphore");
         return ATC_ERROR;
     }
     LOG_INFO("init %p success!", context);
     return ATC_SUCCESS;
 }
-void atc_process(uint32_t ms_elapsed){
-    atc_time += ms_elapsed;
-    slist_node_t *node;
-    //遍历atc实例
-    SLIST_FOREACH(node, atc_ctx_list){
-        struct atc_context *context = (struct atc_context *)node->data;
-        if(context==NULL){
-            LOG_WARN("context is NULL, skipping");
-            continue;
-        }
-        //处理“外部API”消息队列
+void atc_process(struct atc_context *context){
+    for(;;){
+        uint32_t wait_ms = ATC_TIMEOUT_MAX;
+
+        //处理"外部API"消息队列
         extern_msg_handle(context);
-        //处理“发送”消息队列
+        //处理"发送"消息队列
         send_msg_handle(context);
         //处理接收缓冲区
         recv_data_handle(context);
         //检查发送消息是否超时
         check_send_timeout(context);
-    }
 
+        //计算剩余超时
+        if(context->current_send_task != NULL){
+            uint32_t elapsed = _atc_time_get() - context->current_send_task->timestamp;
+            if(elapsed < context->current_send_task->timeout){
+                wait_ms = context->current_send_task->timeout - elapsed;
+            }else{
+                wait_ms = 0;  //已超时，下一轮立即处理
+            }
+        }
+
+        g_atc_interface.atc_semaphore_take(context->wake_semaphore, wait_ms);
+    }
 }
 
 uint32_t _atc_time_get(){
-    return atc_time;
+    return g_atc_interface.atc_get_tick_ms();
 }
