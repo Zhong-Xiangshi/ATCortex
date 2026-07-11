@@ -16,7 +16,8 @@ ATCortex 采用**单线程事件循环**模型。`atc_process(context)` 内部�
 ```
 UART ISR → atc_receive_data() ──give_isr──┐
 其他线程 → atc_send_xxx()      ──give─────┼──→ atc_process 唤醒处理
-其他线程 → atc_urc_register()  ──give─────┘
+其他线程 → atc_urc_register()  ──阻塞等待─┘    (同步，信号量阻塞直到注册完成)
+其他线程 → atc_urc_unregister()──阻塞等待─┘
 超时 → semaphore_take 超时返回 ────────────┘
 ```
 
@@ -109,7 +110,8 @@ atc_send_with_prompt_binary_rx_sync(&at_ctx, cmd, cmd_len,
 | `atc_send_async(...)` | 异步发送，结果通过回调通知 |
 | `atc_send_with_prompt_binary_rx_sync(...)` | 同步发送，匹配 prompt 后接收定长二进制数据 |
 | `atc_send_with_prompt_binary_rx_async(...)` | 上述的异步版本 |
-| `atc_urc_register(&ctx, prefix, handler)` | 注册 URC 回调 |
+| `atc_urc_register(&ctx, prefix, handler)` | 同步注册 URC 回调，返回分配的ID（>0） |
+| `atc_urc_unregister(&ctx, id)` | 同步反注册，根据ID移除 URC 回调 |
 
 ### 关键缓冲区大小（ATCortex.h）
 

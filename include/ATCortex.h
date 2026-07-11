@@ -108,6 +108,7 @@ struct atc_context{
 
     //URC处理链表
     slist_t *urc_handler_list;
+    int urc_next_id;             // URC ID分配计数器，初始值1
 
     //当前发送任务
     struct send_task *current_send_task;
@@ -160,14 +161,25 @@ enum atc_result atc_init(struct atc_context *context);
 void atc_process(struct atc_context *context);
 
 /**
- * @brief URC注册函数
- * 
+ * @brief URC注册函数（同步）
+ *        阻塞等待注册完成，返回分配的ID。禁止在URC回调内调用
+ *
  * @param context ATC上下文
- * @param prefix URC前缀，不包含'+'
- * @param handler URC处理函数   
- * @return enum atc_result 
+ * @param prefix  URC前缀，不包含'+'
+ * @param handler URC处理函数
+ * @return int    成功返回分配的ID(>0)，失败返回 -1
  */
-enum atc_result atc_urc_register(struct atc_context *context , const char *prefix, atc_urc_handler_t handler);
+int atc_urc_register(struct atc_context *context , const char *prefix, atc_urc_handler_t handler);
+
+/**
+ * @brief URC反注册函数（同步）
+ *        根据ID移除已注册的URC处理函数。禁止在URC回调内调用
+ *
+ * @param context ATC上下文
+ * @param id      要移除的URC处理函数ID（由 atc_urc_register 返回）
+ * @return enum atc_result 成功返回 ATC_SUCCESS，失败返回 ATC_ERROR
+ */
+enum atc_result atc_urc_unregister(struct atc_context *context, int id);
 
 /**
  * @brief 异步发送AT命令
@@ -181,7 +193,7 @@ enum atc_result atc_urc_register(struct atc_context *context , const char *prefi
 enum atc_result atc_send_async(struct atc_context *context, const char *data, size_t length, atc_cmd_response_handler_t response_handler,uint32_t timeout);
 
 /**
- * @brief 同步发送AT命令
+ * @brief 同步发送AT命令。禁止在URC回调内调用
  * 
  * @param context ATC上下文
  * @param data [IN]要发送的数据

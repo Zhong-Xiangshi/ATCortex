@@ -1,3 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(ATCortex C)
+
 add_library(ATCortex STATIC)
 
 target_sources(ATCortex PRIVATE
@@ -16,6 +19,3 @@ target_include_directories(ATCortex
     PUBLIC include
     PRIVATE .
 )
-
-# 继承 Zephyr 的所有编译 flag (CFLAGS)
-target_link_libraries(ATCortex PRIVATE zephyr_interface)
