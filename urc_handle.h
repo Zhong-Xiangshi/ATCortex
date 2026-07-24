@@ -10,6 +10,6 @@ struct urc_handler_entry{
 enum atc_result urc_init(struct atc_context *context);
 int _atc_urc_register(struct atc_context *context , struct urc_handler_entry *entry);
 enum atc_result _atc_urc_unregister(struct atc_context *context, int id);
-void urc_line_handle(struct atc_context *context, const char *line_data);
+bool urc_line_handle(struct atc_context *context, const char *line_data);
 
 #endif // URC_HANDLE_H

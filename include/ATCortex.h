@@ -165,7 +165,7 @@ void atc_process(struct atc_context *context);
  *        阻塞等待注册完成，返回分配的ID。禁止在URC回调内调用
  *
  * @param context ATC上下文
- * @param prefix  URC前缀，不包含'+'
+ * @param prefix  URC前缀
  * @param handler URC处理函数
  * @return int    成功返回分配的ID(>0)，失败返回 -1
  */

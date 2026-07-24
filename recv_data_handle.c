@@ -90,11 +90,10 @@ static void line_handle(struct atc_context *context, const char *line_data ,size
         //空行，忽略
         return;
     }
-    if(line_data[0] == '+'){
-        //URC处理
-        urc_line_handle(context, line_data);
-    }
-    else{
+    //URC行匹配及处理
+    bool is_urc = urc_line_handle(context, line_data);
+
+    if(is_urc == false){
         //非URC行处理
         normal_line_handle(context, line_data, length);
     }

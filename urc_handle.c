@@ -7,23 +7,28 @@ static void urc_free(void *data){
     if(data) g_atc_interface.atc_free(data);
 }
 
-//URC行处理
-void urc_line_handle(struct atc_context *context, const char *line_data){
+//URC行处理,返回true表示匹配到URC前缀并处理，false表示未匹配到URC前缀
+bool urc_line_handle(struct atc_context *context, const char *line_data){
+    bool is_urc = false;
     if(line_data == NULL){
-        return;
+        return false;
     }
     LOG_TRACE;
     //遍历URC处理链表
     slist_node_t *node;
     SLIST_FOREACH(node, context->urc_handler_list){
         struct urc_handler_entry *entry = (struct urc_handler_entry *)node->data;
-        if(entry && strncmp(line_data + 1, entry->prefix, strlen(entry->prefix)) == 0){
+        LOG_DEBUG("Checking URC handler id:%d, prefix:%s, line_data:%s", entry->id, entry->prefix, line_data);
+        if(entry && strncmp(line_data, entry->prefix, strlen(entry->prefix)) == 0){
             //匹配到URC前缀，调用处理函数
+            LOG_DEBUG("Match id:%d",entry->id);
             if(entry->handler){
                 entry->handler(context, line_data);
             }
+            is_urc = true;
         }
     }
+    return is_urc;
 }
 
 enum atc_result urc_init(struct atc_context *context){
