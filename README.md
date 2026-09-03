@@ -98,6 +98,128 @@ atc_send_with_prompt_binary_rx_sync(&at_ctx, cmd, cmd_len,
     &result, data_buf, &data_len, 5000);
 ```
 
+### 收发示例
+
+**接收机制**：库按行（`\n` 结尾）处理数据——每行先与**已注册**的 URC 前缀做行首匹配，命中则只调 URC 回调、**不进响应缓冲区**；未命中的行累积进响应缓冲区（保留 `\r\n`，空行忽略）。当某行以 `OK` 或 `ERROR` 开头，该行同样进缓冲区，随后本次命令结束并返回 `ATC_SUCCESS`/`ATC_ERROR`。
+
+注意：一行是否算 URC 只取决于其前缀是否已通过 `atc_urc_register` 注册，与行内容（如 `+` 开头）无关。`+CSQ:` 注册前只是普通响应行。因此同一条命令有两种互斥的收法：不注册 URC，结果从 `response_buf` 拿（示例 1）；注册了 URC，响应也会走回调，只能用信号量等（示例 3）。
+
+#### 1. 同步发送 + 解析响应（最常用）
+
+```
+发送: AT+CSQ\r\n
+回复: +CSQ: 24,0\r\n   ← 进 response_buf
+      \r\n             ← 空行忽略
+      OK\r\n           ← 进 response_buf，并结束命令，result = ATC_SUCCESS
+```
+
+```c
+enum atc_result result;
+char rx_buf[64];
+size_t rx_len = sizeof(rx_buf);
+atc_send_sync(&at_ctx, "AT+CSQ\r\n", 8, &result, rx_buf, &rx_len, 1000);
+if (result == ATC_SUCCESS) {
+    int rssi = 99, ber = 99;
+    sscanf(rx_buf, "+CSQ:%d,%d", &rssi, &ber);  // rssi=24, ber=0
+}
+```
+
+注意：`response_buf` 收到的是所有非 URC 行（含 `\r\n`），**包括最后的 `OK`/`ERROR` 行本身**；只有 `\r\n` 的空行被忽略。若 `+CSQ:` 已被注册为 URC，该行会走 URC 回调而不进 `response_buf`（见示例 3）。
+
+#### 2. URC 注册与注销（模组主动上报）
+
+模组主动推送的行（如周期信号上报）不与任何命令对应，用 URC 回调异步接收：
+
+```c
+static int urc_id_csq = -1;
+
+static void urc_csq_handler(struct atc_context *context, const char *line_data) {
+    int rssi, ber;
+    // line_data 形如 "+CSQ: 24,0\r\n"
+    if (sscanf(line_data, "+CSQ:%d,%d", &rssi, &ber) == 2) {
+        // 存储/通知其他线程
+    }
+}
+
+void at_base_init(void) {
+    // 注册成功返回 ID(>0)，保存用于注销
+    urc_id_csq = atc_urc_register(&at_ctx, "+CSQ:", urc_csq_handler);
+}
+
+void at_base_deinit(void) {
+    if (urc_id_csq > 0) {
+        atc_urc_unregister(&at_ctx, urc_id_csq);
+        urc_id_csq = -1;
+    }
+}
+```
+
+#### 3. 发命令 + 等 URC（结果以 URC 形式返回）
+
+查询结果以 URC 上报的命令：`OK` 只表示受理，需再等 URC 回调才能拿到数据。用信号量把两步串成同步：
+
+```c
+static K_SEM_DEFINE(csq_sem, 0, 1);
+static int cur_rssi, cur_ber;
+
+static void urc_csq_handler(struct atc_context *context, const char *line_data) {
+    if (sscanf(line_data, "+CSQ:%d,%d", &cur_rssi, &cur_ber) == 2)
+        k_sem_give(&csq_sem);  // 通知等待线程：数据已就绪
+}
+
+int at_get_csq(int *rssi, int *ber) {
+    enum atc_result result;
+    k_sem_reset(&csq_sem);                                  // 清掉历史信号
+    atc_send_sync(&at_ctx, "AT+CSQ\r\n", 8, &result, NULL, NULL, 1000);
+    if (result != ATC_SUCCESS)
+        return -1;
+    if (k_sem_take(&csq_sem, K_MSEC(1000)) != 0)            // 等 URC 回调填充
+        return -1;
+    *rssi = cur_rssi;
+    *ber  = cur_ber;
+    return 0;
+}
+```
+
+#### 4. 临时 URC 注册（一次性查询）
+
+只出现一次的响应也可注册为临时 URC，用完即注销：
+
+```c
+static void urc_vref_handler(struct atc_context *context, const char *line_data) {
+    LOG_INF("vref: %s", line_data);
+}
+
+int at_get_vref(void) {
+    enum atc_result result;
+    int urc_id = atc_urc_register(&at_ctx, "+VREF:", urc_vref_handler);
+    atc_send_sync(&at_ctx, "AT+VREF?\r\n", 10, &result, NULL, NULL, 1000);
+    atc_urc_unregister(&at_ctx, urc_id);
+    return (result == ATC_SUCCESS) ? 0 : -1;
+}
+```
+
+#### 5. prompt 匹配（等特定提示串）
+
+命令的结束标志不是 `OK` 而是特定提示串（如 TCP 连接结果、`>` 输入提示符）时，用 prompt 匹配接口。`recv_len=0` 表示只等 prompt 不收后续二进制数据，prompt 匹配成功即返回：
+
+```c
+// 发 AT+MIPSTART 等 "CONNECT OK"（TCP 建立结果）
+char cmd[] = "AT+MIPSTART=\"srv\",4333\r\n";
+char prompt[] = "CONNECT OK";
+atc_send_with_prompt_binary_rx_sync(&at_ctx, cmd, strlen(cmd),
+    prompt, strlen(prompt), 0, &result, NULL, NULL, 1000);
+
+// MQTT 发布：发 AT+MPUBEX 等 ">" 提示符，再发 payload 等 "PUBACK"（QoS1）
+atc_send_with_prompt_binary_rx_sync(&at_ctx, mpubex_cmd, strlen(mpubex_cmd),
+    ">", 1, 0, &result, NULL, NULL, 1000);
+if (result == ATC_SUCCESS) {
+    atc_send_with_prompt_binary_rx_sync(&at_ctx, payload, payload_len,
+        "PUBACK", 6, 0, &result, NULL, NULL, 1000);
+}
+```
+
+
 ### API 速查
 
 | API | 说明 |

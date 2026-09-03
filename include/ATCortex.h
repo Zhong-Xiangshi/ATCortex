@@ -126,7 +126,7 @@ struct atc_context{
     void *wake_semaphore; //事件唤醒信号量
 };
 
-//URC处理函数类型定义
+//URC处理函数类型定义，line_data为完整URC行（含'\r\n'）
 typedef void (*atc_urc_handler_t)(struct atc_context *context, const char *line_data);
 
 //AT命令发送返回的结果回调
@@ -165,7 +165,7 @@ void atc_process(struct atc_context *context);
  *        阻塞等待注册完成，返回分配的ID。禁止在URC回调内调用
  *
  * @param context ATC上下文
- * @param prefix  URC前缀
+ * @param prefix  URC前缀（如"+CSQ:"），与接收行做行首完整匹配。
  * @param handler URC处理函数
  * @return int    成功返回分配的ID(>0)，失败返回 -1
  */
@@ -199,7 +199,7 @@ enum atc_result atc_send_async(struct atc_context *context, const char *data, si
  * @param data [IN]要发送的数据
  * @param length [IN]数据长度
  * @param send_result [OUT] 响应结果输出，表示是否收到"OK"。可以为 NULL
- * @param response_buf [OUT] 响应输出缓冲区。返回"OK"前的所有行，不包括URC。可以为 NULL
+ * @param response_buf [OUT] 响应输出缓冲区。输出"OK"/"ERROR"结束行前所有未注册为URC的行（空行除外，包含"OK"/"ERROR"结束行本身）。可以为 NULL
  * @param response_length [IN/OUT] 响应缓冲区长度，输入时为外部缓冲区大小，输出时为实际响应长度。仅在response_buf为NULL时可以为 NULL
  * @param timeout [IN]超时时间（毫秒）。 0表示不使用超时
  * @return enum atc_result 函数执行是否成功 
@@ -216,7 +216,7 @@ enum atc_result atc_send_sync(struct atc_context *context, const char *data, siz
  * @param prompt [IN]特定提示字符串
  * @param prompt_len [IN]特定提示字符串长度
  * @param recv_len [IN]要接收的二进制数据长度，如果不需要接收数据，为0即可。
- * @param response_handler [IN]命令响应处理回调
+ * @param response_handler [IN]命令响应处理回调，其响应输出缓冲区和同步的版本相同
  * @param timeout [IN]超时时间（毫秒）。 0表示不使用超时
  * @return enum atc_result 函数执行是否成功 
  */
