@@ -147,7 +147,8 @@ enum atc_result atc_interface_register(struct atc_interface *interface);
 
 /**
  * @brief 初始化ATC上下文，必须先调用atc_interface_register注册底层接口，然后才能调用此函数
- * 
+ *        内部会清零 context，调用前 context 中的内容会被丢弃
+ *
  * @param context ATC上下文
  * @return enum atc_result 成功返回 ATC_SUCCESS，失败返回 ATC_ERROR
  */
