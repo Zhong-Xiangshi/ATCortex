@@ -269,7 +269,7 @@ void send_msg_handle(struct atc_context *context){
         g_atc_interface.atc_log("\r\n");
 #endif
         //发送数据
-        enum atc_result send_ret = g_atc_interface.atc_send(context, context->current_send_task->data, context->current_send_task->length);
+        enum atc_result send_ret = context->atc_send(context->current_send_task->data, context->current_send_task->length);
         if(send_ret != ATC_SUCCESS){
             //处理硬件发送失败
             LOG_ERR("Failed to send AT command");

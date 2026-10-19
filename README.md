@@ -23,14 +23,13 @@ UART ISR → atc_receive_data() ──give_isr──┐
 
 ### 依赖注入
 
-库本身与 OS 无关，所有系统调用通过 `struct atc_interface` 注入。使用前必须调用 `atc_interface_register()` 注册以下**全部**接口：
+库本身与 OS 无关，系统调用通过 `struct atc_interface` 注入，每个实例的数据发送函数通过 `atc_init` 单独注入。使用前必须调用 `atc_interface_register()` 注册以下**全部**接口：
 
 | 函数指针 | 说明 |
 |---------|------|
 | `atc_malloc` / `atc_free` | 内存分配/释放 |
 | `atc_queue_create` / `atc_queue_send` / `atc_queue_recv` | 消息队列 |
 | `atc_log` | 日志输出 |
-| `atc_send` | 硬件数据发送 |
 | `atc_semaphore_create_binary` / `atc_semaphore_take` / `atc_semaphore_give` / `atc_semaphore_delete` | 信号量（线程上下文） |
 | `atc_semaphore_give_isr` | 信号量 give（**ISR 安全版本**） |
 | `atc_get_tick_ms` | 获取系统毫秒 tick（单调递增） |
@@ -57,9 +56,15 @@ atc_interface_register(&at_interface);
 ```c
 static struct atc_context at_ctx;
 
+// 每个实例可以注入不同的发送实现
+static enum atc_result uart1_send(const char *data, size_t length)
+{
+    return uart_write(uart1, data, length) == length ? ATC_SUCCESS : ATC_ERROR;
+}
+
 void at_thread(void)
 {
-    atc_init(&at_ctx);
+    atc_init(&at_ctx, uart1_send);
     atc_process(&at_ctx);  // 内部死循环，永不返回
 }
 ```
@@ -225,7 +230,7 @@ if (result == ATC_SUCCESS) {
 | API | 说明 |
 |-----|------|
 | `atc_interface_register(&if)` | 注册底层接口（必须先调用） |
-| `atc_init(&ctx)` | 初始化上下文 |
+| `atc_init(&ctx, send_fn)` | 初始化上下文，注入本实例的发送函数 |
 | `atc_process(&ctx)` | 阻塞事件循环（永不返回） |
 | `atc_receive_data(&ctx, data, len)` | 推送接收数据（ISR 中调用） |
 | `atc_send_sync(...)` | 同步发送，等待 OK/ERROR |

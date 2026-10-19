@@ -19,14 +19,19 @@ static void check_send_timeout(struct atc_context *context){
     }
 }
 
-enum atc_result atc_init(struct atc_context *context){
+enum atc_result atc_init(struct atc_context *context, atc_send_t atc_send){
     LOG_TRACE;
     if(context == NULL){
         LOG_ERR("context is NULL");
         return ATC_ERROR;
     }
+    if(atc_send == NULL){
+        LOG_ERR("atc_send is NULL");
+        return ATC_ERROR;
+    }
     //清零上下文，保证未显式初始化的字段（当前发送任务、响应长度、行缓冲索引等）为确定值
     memset(context, 0, sizeof(struct atc_context));
+    context->atc_send = atc_send;
     //初始化接收处理
     if(recv_data_init(context) != ATC_SUCCESS){
         LOG_ERR("Failed to initialize receive data handler");

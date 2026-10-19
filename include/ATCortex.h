@@ -74,8 +74,8 @@ typedef uint32_t (*atc_get_tick_ms_t)(void);
 //log函数
 typedef int (*atc_log_t)(const char *format, ...);
 
-//数据发送函数
-typedef enum atc_result (*atc_send_t)(struct atc_context *context, const char *data, size_t length);
+//数据发送函数，按实例注入
+typedef enum atc_result (*atc_send_t)(const char *data, size_t length);
 
 //底层接口
 struct atc_interface{
@@ -86,7 +86,6 @@ struct atc_interface{
     atc_queue_send_t atc_queue_send;
     atc_queue_recv_t atc_queue_recv;
     atc_log_t atc_log;
-    atc_send_t atc_send;
     atc_semaphore_create_binary_t atc_semaphore_create_binary;
     atc_semaphore_take_t atc_semaphore_take;
     atc_semaphore_give_t atc_semaphore_give;
@@ -98,6 +97,8 @@ struct atc_interface{
 
 
 struct atc_context{
+    atc_send_t atc_send;        //本实例的数据发送函数
+
     ring_buffer_t rx_buffer;
     uint8_t rx_buffer_data[ATC_RX_BUFFER_SIZE];
 
@@ -150,9 +151,10 @@ enum atc_result atc_interface_register(struct atc_interface *interface);
  *        内部会清零 context，调用前 context 中的内容会被丢弃
  *
  * @param context ATC上下文
+ * @param atc_send 本实例的数据发送函数，不能为 NULL
  * @return enum atc_result 成功返回 ATC_SUCCESS，失败返回 ATC_ERROR
  */
-enum atc_result atc_init(struct atc_context *context);
+enum atc_result atc_init(struct atc_context *context, atc_send_t atc_send);
 
 /**
  * @brief ATC处理函数，阻塞等待事件（数据到达/API调用/超时），内部死循环不返回
