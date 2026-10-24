@@ -105,7 +105,13 @@ atc_send_with_prompt_binary_rx_sync(&at_ctx, cmd, cmd_len,
 
 ### 收发示例
 
-**接收机制**：库按行（`\n` 结尾）处理数据——每行先与**已注册**的 URC 前缀做行首匹配，命中则只调 URC 回调、**不进响应缓冲区**；未命中的行累积进响应缓冲区（保留 `\r\n`，空行忽略）。当某行以 `OK` 或 `ERROR` 开头，该行同样进缓冲区，随后本次命令结束并返回 `ATC_SUCCESS`/`ATC_ERROR`。
+**接收机制**：库按行（`\n` 结尾）处理数据——每行先与**已注册**的 URC 前缀做行首匹配，命中则只调 URC 回调、**不进响应缓冲区**；未命中的行累积进响应缓冲区（保留 `\r\n`，空行忽略）。当某行以内置结束符开头时，该行同样进缓冲区，随后本次命令结束并按结束符表返回结果码：
+
+| 行首匹配 | 返回结果 |
+|---------|---------|
+| `OK` | `ATC_SUCCESS` |
+| `ERROR` | `ATC_ERROR` |
+| `BUSY_ERROR` | `ATC_BUSY`（模块忙） |
 
 注意：一行是否算 URC 只取决于其前缀是否已通过 `atc_urc_register` 注册，与行内容（如 `+` 开头）无关。`+CSQ:` 注册前只是普通响应行。因此同一条命令有两种互斥的收法：不注册 URC，结果从 `response_buf` 拿（示例 1）；注册了 URC，响应也会走回调，只能用信号量等（示例 3）。
 
@@ -233,7 +239,7 @@ if (result == ATC_SUCCESS) {
 | `atc_init(&ctx, send_fn)` | 初始化上下文，注入本实例的发送函数 |
 | `atc_process(&ctx)` | 阻塞事件循环（永不返回） |
 | `atc_receive_data(&ctx, data, len)` | 推送接收数据（ISR 中调用） |
-| `atc_send_sync(...)` | 同步发送，等待 OK/ERROR |
+| `atc_send_sync(...)` | 同步发送，等待 OK/ERROR/BUSY_ERROR |
 | `atc_send_async(...)` | 异步发送，结果通过回调通知 |
 | `atc_send_with_prompt_binary_rx_sync(...)` | 同步发送，匹配 prompt 后接收定长二进制数据 |
 | `atc_send_with_prompt_binary_rx_async(...)` | 上述的异步版本 |
