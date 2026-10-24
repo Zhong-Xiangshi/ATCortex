@@ -7,11 +7,17 @@
 #include <ctype.h>
 #include "stack.h"
 
-//命令结束符数组
-static const char *command_end_markers[] = {
-    "OK",
-    "ERROR",
-    NULL
+//命令结束符表，行首匹配，命中即结束当前发送任务
+struct command_end_marker{
+    const char *prefix;
+    enum atc_result result;
+};
+
+static const struct command_end_marker command_end_markers[] = {
+    { "OK",         ATC_SUCCESS },
+    { "ERROR",      ATC_ERROR   },
+    { "BUSY_ERROR", ATC_BUSY    },
+    { NULL,         ATC_ERROR   }   //哨兵
 };
 
 //响应缓冲区清空
@@ -69,12 +75,11 @@ static void normal_line_handle(struct atc_context *context, const char *line_dat
     //推入响应缓冲区
     push_to_response_buffer(context, line_data, length);
     //检查最新一行是否为命令结束符
-    for(int i = 0; command_end_markers[i] != NULL; i++){
-        size_t marker_length = strlen(command_end_markers[i]);
-        if(length >= marker_length && strncmp(line_data, command_end_markers[i], marker_length) == 0){
+    for(int i = 0; command_end_markers[i].prefix != NULL; i++){
+        size_t marker_length = strlen(command_end_markers[i].prefix);
+        if(length >= marker_length && strncmp(line_data, command_end_markers[i].prefix, marker_length) == 0){
             //命令结束符匹配，处理命令结束
-            bool is_ok = (strcmp(command_end_markers[i], "OK") == 0);
-            command_end_handle(context, is_ok ? ATC_SUCCESS : ATC_ERROR);
+            command_end_handle(context, command_end_markers[i].result);
             break;
         }
     }

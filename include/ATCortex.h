@@ -24,6 +24,7 @@ enum atc_result{
     ATC_ERROR = -1,
     ATC_TIMEOUT = -2,
     ATC_HARDWARE_ERROR = -3,
+    ATC_BUSY = -4,          //模块忙
 };
 
 //内存分配函数
