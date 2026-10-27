@@ -13,12 +13,12 @@ bool urc_line_handle(struct atc_context *context, const char *line_data){
     if(line_data == NULL){
         return false;
     }
-    LOG_TRACE;
+    LOG_TRACE_LINE;
     //遍历URC处理链表
     slist_node_t *node;
     SLIST_FOREACH(node, context->urc_handler_list){
         struct urc_handler_entry *entry = (struct urc_handler_entry *)node->data;
-        LOG_DEBUG("Checking URC handler id:%d, prefix:%s, line_data:%s", entry->id, entry->prefix, line_data);
+        LOG_TRACE("Checking URC handler id:%d, prefix:%s, line_data:%s", entry->id, entry->prefix, line_data);
         if(entry && strncmp(line_data, entry->prefix, strlen(entry->prefix)) == 0){
             //匹配到URC前缀，调用处理函数
             LOG_DEBUG("Match id:%d",entry->id);

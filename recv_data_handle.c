@@ -43,7 +43,7 @@ void command_end_handle(struct atc_context *context, enum atc_result result){
         LOG_DEBUG("Response result: %d", result);
         //打印所有响应
         if(context->response_length > 0 && context->current_send_task->status != SEND_TASK_STATUS_BINARY)
-            LOG_DEBUG("response:\r\n%s", context->response);
+            LOG_TRACE("response:\r\n%s", context->response);
         //调用响应处理回调
         if(context->current_send_task->response_handler){
             context->current_send_task->response_handler(context, result, context->response, context->response_length);
@@ -71,7 +71,7 @@ void command_end_handle(struct atc_context *context, enum atc_result result){
 
 //普通行处理
 static void normal_line_handle(struct atc_context *context, const char *line_data ,size_t length){
-    LOG_TRACE;
+    LOG_TRACE_LINE;
     //推入响应缓冲区
     push_to_response_buffer(context, line_data, length);
     //检查最新一行是否为命令结束符
@@ -90,7 +90,25 @@ static void line_handle(struct atc_context *context, const char *line_data ,size
     if(line_data == NULL){
         return;
     }
-    LOG_DEBUG("Received line: %s", line_data);
+#if LOG_LEVEL >= LOG_LEVEL_DEBUG
+    g_atc_interface.atc_log(DBG_NAME"[RECV]:");
+    for(size_t i = 0; i < length; i++){
+        unsigned char ch = (unsigned char)line_data[i];
+        if(ch == '\r'){
+            g_atc_interface.atc_log("[\\r]");
+        }
+        else if(ch == '\n'){
+            g_atc_interface.atc_log("[\\n]");
+        }
+        else if(isprint(ch)){
+            g_atc_interface.atc_log("%c", ch);
+        }
+        else{
+            g_atc_interface.atc_log("[0x%02X]", ch);
+        }
+    }
+    g_atc_interface.atc_log("\r\n");
+#endif
     if(length <= 2){
         //空行，忽略
         return;
@@ -177,8 +195,8 @@ void recv_data_handle(struct atc_context *context){
     unsigned char byte;
     while(ring_buffer_read(&context->rx_buffer, &byte)){
         //打印接收到的数据
-#if LOG_LEVEL >= LOG_LEVEL_DEBUG
-        g_atc_interface.atc_log(DBG_NAME"[RECV]:");
+#if LOG_LEVEL >= LOG_LEVEL_TRACE
+        g_atc_interface.atc_log(DBG_NAME"[_RECV]:");
         if(isprint(byte)){
             g_atc_interface.atc_log("%c", byte);
         }

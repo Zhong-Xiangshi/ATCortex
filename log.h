@@ -11,7 +11,7 @@
 #define LOG_LEVEL_TRACE 4
 
 #ifndef LOG_LEVEL 
-    #define LOG_LEVEL LOG_LEVEL_TRACE
+    #define LOG_LEVEL LOG_LEVEL_DEBUG
 #endif
 #ifndef DBG_NAME 
     #define DBG_NAME "ATCortex"
@@ -44,9 +44,11 @@
 #endif
 
 #if LOG_LEVEL >= LOG_LEVEL_TRACE
-    #define LOG_TRACE g_atc_interface.atc_log(DBG_NAME"[TRACE][%s] to line:%d\r\n", __func__,__LINE__)
+    #define LOG_TRACE_LINE g_atc_interface.atc_log(DBG_NAME"[TRACE][%s] to line:%d\r\n", __func__,__LINE__)
+    #define LOG_TRACE(fmt,...) g_atc_interface.atc_log(DBG_NAME"[TRACE][line:%d][%s]:"fmt"\r\n", __LINE__,__func__,##__VA_ARGS__)
 #else
-    #define LOG_TRACE
+    #define LOG_TRACE_LINE
+    #define LOG_TRACE(fmt,...) do { if(0) g_atc_interface.atc_log(fmt, ##__VA_ARGS__); } while(0)
 #endif
 
 #endif // LOG_H
