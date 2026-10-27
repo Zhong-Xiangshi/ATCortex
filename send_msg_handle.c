@@ -259,11 +259,18 @@ void send_msg_handle(struct atc_context *context){
 #if LOG_LEVEL >= LOG_LEVEL_DEBUG
         g_atc_interface.atc_log(DBG_NAME"[SEND]:");
         for(size_t i = 0; i < rtask.length; i++){
-            if(isprint((int)rtask.data[i])){
-                g_atc_interface.atc_log("%c", rtask.data[i]);
+            unsigned char ch = (unsigned char)rtask.data[i];
+            if(ch == '\r'){            //回车
+                g_atc_interface.atc_log("[\\r]");
             }
-            else{
-                g_atc_interface.atc_log("[0x%02X]", (unsigned char)rtask.data[i]);
+            else if(ch == '\n'){       //换行
+                g_atc_interface.atc_log("[\\n]");
+            }
+            else if(isprint(ch)){      //可显示字符原样输出
+                g_atc_interface.atc_log("%c", ch);
+            }
+            else{                      //其它不可显示字符转 [0xXX]
+                g_atc_interface.atc_log("[0x%02X]", ch);
             }
         }
         g_atc_interface.atc_log("\r\n");

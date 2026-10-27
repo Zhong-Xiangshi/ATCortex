@@ -21,7 +21,7 @@ bool urc_line_handle(struct atc_context *context, const char *line_data){
         LOG_TRACE("Checking URC handler id:%d, prefix:%s, line_data:%s", entry->id, entry->prefix, line_data);
         if(entry && strncmp(line_data, entry->prefix, strlen(entry->prefix)) == 0){
             //匹配到URC前缀，调用处理函数
-            LOG_DEBUG("Match id:%d",entry->id);
+            LOG_TRACE("Match id:%d",entry->id);
             if(entry->handler){
                 entry->handler(context, line_data);
             }
